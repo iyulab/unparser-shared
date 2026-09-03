@@ -29,14 +29,18 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Reject normal and build dependencies
+      - name: Reject unconditional normal and build dependencies
         shell: bash
         run: |
           metadata=$(cargo metadata --format-version 1 --no-deps)
 
           shipped=$(echo "$metadata" | jq -r '
             .packages[] | select(.name == "unparser-shared") | .dependencies[]
-            | select(.kind != "dev") | "\(.kind // "normal"): \(.name)"')
+            | select(.kind != "dev" and (.optional != true)) | "\(.kind // "normal"): \(.name)"')
+
+          optional=$(echo "$metadata" | jq -r '
+            .packages[] | select(.name == "unparser-shared") | .dependencies[]
+            | select(.kind != "dev" and .optional == true) | .name')
 
           dev=$(echo "$metadata" | jq -r '
             .packages[] | select(.name == "unparser-shared") | .dependencies[]
@@ -47,13 +51,18 @@ jobs:
             echo "$dev" | sed 's/^/  /'
           fi
 
+          if [ -n "$optional" ]; then
+            echo "Optional dependencies (gated behind a feature, not linked unless a consumer opts in):"
+            echo "$optional" | sed 's/^/  /'
+          fi
+
           if [ -n "$shipped" ]; then
             echo "$shipped" | sed 's/^/  /'
-            echo "::error::unparser-shared's crate root must have no normal or build dependencies — it is linked statically into three published cdylibs, so a dependency here is a dependency in all of them. See the crate docs' Scope section."
+            echo "::error::unparser-shared's crate root must have no unconditional normal or build dependencies — it is linked statically into three published cdylibs, so a dependency here is a dependency in all of them. A new capability's dependency must be optional = true and gated behind its own feature. See the crate docs' Scope section."
             exit 1
           fi
 
-          echo "No normal or build dependencies."
+          echo "No unconditional normal or build dependencies."
 
   # The version lives in two places that drift independently: Cargo.toml and the
   # html_root_url attribute that makes intra-doc links resolve on docs.rs. A
@@ -108,8 +117,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Run tests
+      - name: Run tests (default features)
         run: cargo test
+
+      - name: Run tests (all features)
+        run: cargo test --all-features
 
   # The manifest declares rust-version, and consumers pin their own MSRV against
   # it. Nothing else in this workflow would notice if a newer feature crept in.
@@ -145,8 +157,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-msrv-
 
-      - name: Run tests on the declared MSRV
+      - name: Run tests (default features)
         run: cargo test
+
+      - name: Run tests (all features)
+        run: cargo test --all-features
 
   # The crate documents itself as suitable for every consumer including
   # wasm32-unknown-unknown. That claim is only worth making if it is checked.
@@ -175,6 +190,9 @@ jobs:
 
       - name: Build
         run: cargo build --target wasm32-unknown-unknown
+
+      - name: Build for wasm32 (all features)
+        run: cargo build --target wasm32-unknown-unknown --all-features
 
   lint:
     name: Lint
@@ -214,7 +232,7 @@ jobs:
       - name: Build documentation
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --no-deps
+        run: cargo doc --all-features --no-deps
 
   # Catches what only surfaces at packaging time: a file the manifest excludes
   # by accident, or metadata crates.io rejects. Publishing is deliberate and

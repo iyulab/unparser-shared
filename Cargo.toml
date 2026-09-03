@@ -13,11 +13,23 @@ keywords = ["ffi", "c-abi", "error-handling", "document", "extraction"]
 categories = ["development-tools::ffi", "api-bindings"]
 rust-version = "1.87"
 
+[features]
+default = []
+# Lossless, idempotent markdown shape-refinement. Off by default so the
+# always-linked crate root stays dependency-free; a caller that never
+# touches `refine` never pulls in pulldown-cmark.
+refine = ["dep:pulldown-cmark", "dep:pulldown-cmark-to-cmark"]
+
 # The crate root (ffi/kind/scaffold) is linked unconditionally by three published
 # cdylibs, so it stays dependency-free — a dependency here is a dependency in all
-# of them. Optional capabilities (refine, ai — not yet migrated) each bring their
-# own dependency behind their own feature flag instead.
+# of them. Optional capabilities (refine, ai) each bring their own dependency
+# behind their own feature flag instead.
 [dependencies]
+pulldown-cmark = { version = "0.13", default-features = false, optional = true }
+pulldown-cmark-to-cmark = { version = "22", optional = true }
+
+[dev-dependencies]
+proptest = "1"
 
 [lints.rust]
 missing_docs = "deny"
