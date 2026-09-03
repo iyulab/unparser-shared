@@ -10,9 +10,10 @@
 //! representation, render Markdown — and expose it the same way: a Rust API, a C ABI, and
 //! C#, Python and WebAssembly bindings over that ABI. The *document* parts differ
 //! entirely and belong in each library. The parts that do not differ live here: thread-local
-//! last-error storage, catching panics before they cross `extern "C"`, the integer space
-//! the error classifications live in — and, as opt-in features, markdown shape-refinement
-//! and VLM/AI-assisted extraction.
+//! last-error storage, catching panics before they cross `extern "C"`, and the integer space
+//! the error classifications live in. Two more capabilities are planned as opt-in features
+//! once their own migrations land: markdown shape-refinement and VLM/AI-assisted extraction
+//! — see [Modules](#modules) below for what exists today.
 //!
 //! # Scope, and what is kept out
 //!
