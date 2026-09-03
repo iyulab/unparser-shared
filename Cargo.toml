@@ -31,6 +31,16 @@ pulldown-cmark-to-cmark = { version = "22", optional = true }
 [dev-dependencies]
 proptest = "1"
 
+[[test]]
+name = "refine_golden"
+path = "tests/refine_golden.rs"
+required-features = ["refine"]
+
+[[test]]
+name = "refine_roundtrip_properties"
+path = "tests/refine_roundtrip_properties.rs"
+required-features = ["refine"]
+
 [lints.rust]
 missing_docs = "deny"
 unsafe_op_in_unsafe_fn = "deny"
