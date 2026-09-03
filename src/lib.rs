@@ -40,7 +40,7 @@
 //! # A minimal library
 //!
 //! ```
-//! use std::ffi::{c_char, c_int};
+//! use std::ffi::c_int;
 //! use unparser_shared::ffi::{self, FfiError, LastErrorSlot};
 //! use unparser_shared::kind;
 //!
