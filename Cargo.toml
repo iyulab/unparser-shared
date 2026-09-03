@@ -1,0 +1,24 @@
+[package]
+name = "unparser-shared"
+version = "0.1.0"
+edition = "2021"
+authors = ["iyulab"]
+license = "MIT"
+description = "Shared plumbing for the un* document extraction family — C-ABI conventions today; markdown refine and VLM/AI capabilities land as opt-in features"
+repository = "https://github.com/iyulab/unparser-shared"
+homepage = "https://github.com/iyulab/unparser-shared"
+documentation = "https://docs.rs/unparser-shared"
+readme = "README.md"
+keywords = ["ffi", "c-abi", "error-handling", "document", "extraction"]
+categories = ["development-tools::ffi", "api-bindings"]
+rust-version = "1.87"
+
+# The crate root (ffi/kind/scaffold) is linked unconditionally by three published
+# cdylibs, so it stays dependency-free — a dependency here is a dependency in all
+# of them. Optional capabilities (refine, ai — not yet migrated) each bring their
+# own dependency behind their own feature flag instead.
+[dependencies]
+
+[lints.rust]
+missing_docs = "deny"
+unsafe_op_in_unsafe_fn = "deny"

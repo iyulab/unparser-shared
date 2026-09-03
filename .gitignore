@@ -1,0 +1,17 @@
+# Build artifacts
+/target/
+
+# Local-only: dev-tracking documents live in the umbrella, not here.
+# Guard against committing them by accident.
+claudedocs/
+CLAUDE.md
+
+# Editor / tool state
+.idea/
+.vscode/
+.serena/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

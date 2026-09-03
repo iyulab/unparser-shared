@@ -1,0 +1,236 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Run JavaScript actions on Node.js 24. Opt-in flag documented in
+  # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+  # Forced default on 2026-06-02; remove this line after that date.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  # This crate's defining constraint, checked first because everything else is
+  # cheaper to fix. Three published cdylibs link this statically, so a dependency
+  # here is a dependency in all of them — which is why the charter says there are
+  # none. Dev-dependencies do not reach consumers, so they are reported rather
+  # than rejected.
+  no-dependencies:
+    name: No Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Reject normal and build dependencies
+        shell: bash
+        run: |
+          metadata=$(cargo metadata --format-version 1 --no-deps)
+
+          shipped=$(echo "$metadata" | jq -r '
+            .packages[] | select(.name == "unparser-shared") | .dependencies[]
+            | select(.kind != "dev") | "\(.kind // "normal"): \(.name)"')
+
+          dev=$(echo "$metadata" | jq -r '
+            .packages[] | select(.name == "unparser-shared") | .dependencies[]
+            | select(.kind == "dev") | .name')
+
+          if [ -n "$dev" ]; then
+            echo "Dev-dependencies (not shipped to consumers, allowed):"
+            echo "$dev" | sed 's/^/  /'
+          fi
+
+          if [ -n "$shipped" ]; then
+            echo "$shipped" | sed 's/^/  /'
+            echo "::error::unparser-shared's crate root must have no normal or build dependencies — it is linked statically into three published cdylibs, so a dependency here is a dependency in all of them. See the crate docs' Scope section."
+            exit 1
+          fi
+
+          echo "No normal or build dependencies."
+
+  # The version lives in two places that drift independently: Cargo.toml and the
+  # html_root_url attribute that makes intra-doc links resolve on docs.rs. A
+  # release has already shipped with them out of step once.
+  version-sync:
+    name: Version Consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Cargo.toml and html_root_url agree
+        shell: bash
+        run: |
+          manifest=$(grep -m1 '^version = ' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          doc_url=$(grep -m1 'html_root_url' src/lib.rs | sed 's|.*/unparser-shared/\([^"]*\)".*|\1|')
+
+          echo "Cargo.toml:            $manifest"
+          echo "lib.rs html_root_url:  $doc_url"
+
+          if [ "$manifest" != "$doc_url" ]; then
+            echo "::error::Version mismatch — bump Cargo.toml and src/lib.rs's html_root_url together, or docs.rs will resolve intra-doc links against the wrong version."
+            exit 1
+          fi
+          echo "Versions match: $manifest"
+
+  test:
+    name: Test
+    needs: [no-dependencies, version-sync]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        # All three, because this crate is linked into cdylibs shipped for all
+        # three — and its one piece of platform-sensitive code is a
+        # thread_local holding a CString.
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run tests
+        run: cargo test
+
+  # The manifest declares rust-version, and consumers pin their own MSRV against
+  # it. Nothing else in this workflow would notice if a newer feature crept in.
+  msrv:
+    name: MSRV
+    needs: [no-dependencies, version-sync]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read rust-version from the manifest
+        id: msrv
+        shell: bash
+        run: |
+          version=$(grep -m1 '^rust-version = ' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          echo "toolchain=$version" >> "$GITHUB_OUTPUT"
+          echo "Declared MSRV: $version"
+
+      - name: Install the declared toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.toolchain }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-msrv-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-msrv-
+
+      - name: Run tests on the declared MSRV
+        run: cargo test
+
+  # The crate documents itself as suitable for every consumer including
+  # wasm32-unknown-unknown. That claim is only worth making if it is checked.
+  wasm:
+    name: Build for wasm32
+    needs: [no-dependencies, version-sync]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-wasm-
+
+      - name: Build
+        run: cargo build --target wasm32-unknown-unknown
+
+  lint:
+    name: Lint
+    needs: [no-dependencies, version-sync]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # --all-targets so the macros are linted as they expand in this crate's
+      # own tests. That is the only place they get linted at all: a consuming
+      # crate's clippy largely suppresses lints for code expanded from another
+      # crate's macro.
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # docs.rs keeps a published version's documentation permanently, and this
+  # crate's macro docs are dense with intra-doc links. A broken one cannot be
+  # fixed without publishing a new version.
+  docs:
+    name: Docs
+    needs: [no-dependencies, version-sync]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps
+
+  # Catches what only surfaces at packaging time: a file the manifest excludes
+  # by accident, or metadata crates.io rejects. Publishing is deliberate and
+  # manual — nothing here uploads anything.
+  package:
+    name: Package
+    needs: [test, lint, docs]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify the crate packages cleanly
+        run: cargo publish --dry-run
+
+      - name: Show what would ship
+        run: cargo package --list
