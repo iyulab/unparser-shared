@@ -11,13 +11,16 @@ document-extraction family.
 - `kind` — the error-kind numbering the family already shares, and the bands that keep
   future reasons from colliding.
 - `scaffold` — macros that assemble a C entry point out of the two primitives above.
+- `refine` (opt-in feature) — a lossless, idempotent markdown shape-refinement pass: table
+  shape normalization, ordered-list renumbering, link/image path normalization, frontmatter
+  normalization, and section anchors.
 
-These three modules are always compiled and have **zero dependencies** — three published
+`ffi`/`kind`/`scaffold` are always compiled and have **zero dependencies** — three published
 cdylibs link this crate statically, so a dependency here is a dependency in all of them.
+`refine` is opt-in and brings its own dependency (`pulldown-cmark`) only when enabled.
 
 ## On the roadmap
 
-- `refine` (opt-in feature) — a lossless, idempotent markdown shape-refinement pass.
 - `ai` (opt-in feature) — VLM-based image understanding (OCR or description, judged per
   image) and AI-assisted markdown refine, active only when the caller supplies an API key.
 
