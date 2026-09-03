@@ -11,9 +11,9 @@
 //! C#, Python and WebAssembly bindings over that ABI. The *document* parts differ
 //! entirely and belong in each library. The parts that do not differ live here: thread-local
 //! last-error storage, catching panics before they cross `extern "C"`, and the integer space
-//! the error classifications live in. Two more capabilities are planned as opt-in features
-//! once their own migrations land: markdown shape-refinement and VLM/AI-assisted extraction
-//! — see [Modules](#modules) below for what exists today.
+//! the error classifications live in. One more capability is planned as an opt-in feature
+//! once its own migration lands: VLM/AI-assisted extraction — see [Modules](#modules)
+//! below for what exists today.
 //!
 //! # Scope, and what is kept out
 //!
@@ -33,6 +33,10 @@
 //!   future ones from colliding. Read its docs before adding a kind anywhere.
 //! - [`ffi`] — [`ffi::LastErrorSlot`], the [`ffi::catch`] panic guard, and the macros that
 //!   export the ABI over them.
+//! - [`refine`] *(feature `refine`)* — a lossless, idempotent markdown shape-refinement pass:
+//!   table shape normalization, ordered-list renumbering, link/image path normalization,
+//!   frontmatter normalization, and section anchors. Composes with a renderer's own
+//!   `cleanup` stage in either order.
 //! - [`scaffold`] — macros that assemble an entry point out of those primitives. Reach for
 //!   these before writing the five steps by hand; the sentinel differs by return type and
 //!   that is where hand-written entry points drift.
@@ -86,4 +90,6 @@
 
 pub mod ffi;
 pub mod kind;
+#[cfg(feature = "refine")]
+pub mod refine;
 pub mod scaffold;
