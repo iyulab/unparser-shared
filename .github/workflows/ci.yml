@@ -16,10 +16,11 @@ env:
 
 jobs:
   # This crate's defining constraint, checked first because everything else is
-  # cheaper to fix. Three published cdylibs link this statically, so a dependency
-  # here is a dependency in all of them — which is why the charter says there are
-  # none. Dev-dependencies do not reach consumers, so they are reported rather
-  # than rejected.
+  # cheaper to fix. Three published cdylibs link this statically, so an
+  # unconditional dependency here is a dependency in all of them — which is why
+  # the crate root has none. A new capability (e.g. refine, ai) may bring one,
+  # but only as optional and gated behind its own feature. Dev-dependencies do
+  # not reach consumers, so they are reported rather than rejected.
   no-dependencies:
     name: No Dependencies
     runs-on: ubuntu-latest
@@ -229,7 +230,12 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build documentation
+      - name: Build documentation (default features)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps
+
+      - name: Build documentation (all features)
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --all-features --no-deps

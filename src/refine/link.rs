@@ -13,7 +13,7 @@
 //! Backslashes and duplicate slashes,
 //! by contrast, parse into a perfectly valid `Link`/`Image` event with the
 //! raw destination preserved verbatim (verified empirically) — that valid-
-//! but-messy shape is exactly this crate's mandate, and is safe to rewrite
+//! but-messy shape is exactly this module's mandate, and is safe to rewrite
 //! here with zero risk of ever creating or losing a link.
 //!
 //! **Never touches a destination containing `://` or starting with `//`.**

@@ -10,5 +10,7 @@
   `unhwp` adopt it.
 - `refine` (opt-in feature) — vendored from [`unrefine`](https://crates.io/crates/unrefine)
   0.1.0 verbatim (no behavior change; self-referential doc-comment paths and internal
-  cross-references were updated for the new crate/module identity). `unrefine` itself will
-  be archived once `unpdf`/`undoc`/`unhwp` switch their dependency over.
+  cross-references were updated for the new crate/module identity). The markdown engine
+  moved to `pulldown-cmark` 0.13 / `pulldown-cmark-to-cmark` 22 (from 0.12/18), with the
+  golden snapshots unchanged. `unrefine` itself will be archived once `unpdf`/`undoc`/
+  `unhwp` switch their dependency over.

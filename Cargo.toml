@@ -13,6 +13,9 @@ keywords = ["ffi", "c-abi", "error-handling", "document", "extraction"]
 categories = ["development-tools::ffi", "api-bindings"]
 rust-version = "1.87"
 
+[package.metadata.docs.rs]
+all-features = true
+
 [features]
 default = []
 # Lossless, idempotent markdown shape-refinement. Off by default so the

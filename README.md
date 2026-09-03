@@ -17,7 +17,7 @@ document-extraction family.
 
 `ffi`/`kind`/`scaffold` are always compiled and have **zero dependencies** — three published
 cdylibs link this crate statically, so a dependency here is a dependency in all of them.
-`refine` is opt-in and brings its own dependency (`pulldown-cmark`) only when enabled.
+`refine` is opt-in and brings its own dependencies (`pulldown-cmark`, `pulldown-cmark-to-cmark`) only when enabled.
 
 ## On the roadmap
 

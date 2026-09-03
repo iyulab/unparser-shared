@@ -3,7 +3,7 @@
 //!
 //! It is not a general markdown formatter, and it is not `cleanup` (the
 //! noise-removal stage each `un*` renderer already ships). `cleanup` deletes —
-//! page-number lines, repeated headers/footers, mojibake. It never
+//! page-number lines, repeated headers/footers, mojibake. This module never
 //! deletes: it enforces two invariants across every pass it runs.
 //!
 //! - **Lossless** — every visible text token present before a pass is still
@@ -31,8 +31,8 @@
 //! [`refine`] always runs the CommonMark round trip (parse with
 //! `pulldown-cmark`, re-serialize with `pulldown-cmark-to-cmark`) every pass
 //! runs inside, plus the frontmatter handling and parse-failure fallback
-//! that round trip needs — even with all five passes still to land, that
-//! round trip alone is not a no-op (see `roundtrip`'s ordered-list
+//! that round trip needs — that round trip alone is not a no-op (see
+//! `roundtrip`'s ordered-list
 //! renumbering, which changes output on *any* ordered list, not only a
 //! malformed one).
 //!

@@ -87,6 +87,7 @@
 //! ```
 
 #![doc(html_root_url = "https://docs.rs/unparser-shared/0.1.0")]
+#![cfg_attr(not(feature = "refine"), allow(rustdoc::broken_intra_doc_links))]
 
 pub mod ffi;
 pub mod kind;
