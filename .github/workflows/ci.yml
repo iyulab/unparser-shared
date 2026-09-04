@@ -192,8 +192,12 @@ jobs:
       - name: Build
         run: cargo build --target wasm32-unknown-unknown
 
-      - name: Build for wasm32 (all features)
-        run: cargo build --target wasm32-unknown-unknown --all-features
+      # `--all-features` deliberately excluded here: `ai` brings a native HTTP
+      # client (ureq) that does not target wasm32-unknown-unknown. That is a
+      # design decision (see unparser-shared's crate docs), not a gap — `refine`
+      # is still checked so this job still catches a real wasm regression there.
+      - name: Build for wasm32 (refine feature)
+        run: cargo build --target wasm32-unknown-unknown --features refine
 
   lint:
     name: Lint

@@ -23,6 +23,12 @@ default = []
 # touches `refine` never pulls in pulldown-cmark.
 refine = ["dep:pulldown-cmark", "dep:pulldown-cmark-to-cmark"]
 
+# VLM-based image understanding + AI-assisted markdown refine. Brings a
+# network stack, so — unlike `refine` — this is also excluded from the wasm
+# CI job (see .github/workflows/ci.yml): a native HTTP client does not build
+# for wasm32-unknown-unknown, and that is a design decision, not a gap.
+ai = ["dep:ureq", "dep:serde", "dep:serde_json", "dep:base64", "dep:thiserror"]
+
 # The crate root (ffi/kind/scaffold) is linked unconditionally by three published
 # cdylibs, so it stays dependency-free — a dependency here is a dependency in all
 # of them. Optional capabilities (refine, ai) each bring their own dependency
@@ -30,9 +36,22 @@ refine = ["dep:pulldown-cmark", "dep:pulldown-cmark-to-cmark"]
 [dependencies]
 pulldown-cmark = { version = "0.13", default-features = false, optional = true }
 pulldown-cmark-to-cmark = { version = "22", optional = true }
+# `default-features = false` drops gzip/cookie-jar/etc — this feature wants only
+# a TLS-capable transport and JSON (de)serialization, kept as narrow as ureq allows.
+ureq = { version = "3.4", default-features = false, features = ["rustls", "json"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+base64 = { version = "0.23", optional = true }
+# Family convention — unpdf/undoc/unhwp's error.rs all use it already.
+thiserror = { version = "2.0", optional = true }
 
 [dev-dependencies]
 proptest = "1"
+# A synchronous mock HTTP server for the `ai` feature's integration tests.
+# Chosen over httpmock/wiremock specifically because both pull in tokio —
+# this crate's design goal of never propagating an async runtime applies to
+# dev-dependencies too, not just to what ships to consumers.
+tiny_http = "0.12"
 
 [[test]]
 name = "refine_golden"
@@ -43,6 +62,16 @@ required-features = ["refine"]
 name = "refine_roundtrip_properties"
 path = "tests/refine_roundtrip_properties.rs"
 required-features = ["refine"]
+
+[[test]]
+name = "ai_image_understanding"
+path = "tests/ai_image_understanding.rs"
+required-features = ["ai"]
+
+[[test]]
+name = "ai_refine"
+path = "tests/ai_refine.rs"
+required-features = ["ai"]
 
 [lints.rust]
 missing_docs = "deny"
