@@ -11,9 +11,8 @@
 //! C#, Python and WebAssembly bindings over that ABI. The *document* parts differ
 //! entirely and belong in each library. The parts that do not differ live here: thread-local
 //! last-error storage, catching panics before they cross `extern "C"`, and the integer space
-//! the error classifications live in. One more capability is planned as an opt-in feature
-//! once its own migration lands: VLM/AI-assisted extraction — see [Modules](#modules)
-//! below for what exists today.
+//! the error classifications live in. VLM/AI-assisted extraction is also here now, as an
+//! opt-in feature — see [Modules](#modules) below.
 //!
 //! # Scope, and what is kept out
 //!
@@ -25,7 +24,8 @@
 //!   behind their own feature flag instead of widening this baseline.
 //!
 //! It is `std`-only at the root — [`ffi::LastErrorSlot`] holds a `CString` and lives in a
-//! `thread_local!` — which suits every consumer including `wasm32-unknown-unknown`.
+//! `thread_local!` — which suits every consumer including `wasm32-unknown-unknown`
+//! (the `refine` feature does too; `ai` is native-only — see its module docs).
 //!
 //! # Modules
 //!
@@ -37,6 +37,8 @@
 //!   table shape normalization, ordered-list renumbering, link/image path normalization,
 //!   frontmatter normalization, and section anchors. Composes with a renderer's own
 //!   `cleanup` stage in either order.
+//! - [`ai`] *(feature `ai`, native only)* — VLM-based image understanding and
+//!   AI-assisted markdown refine, active only when a caller supplies an API key.
 //! - [`scaffold`] — macros that assemble an entry point out of those primitives. Reach for
 //!   these before writing the five steps by hand; the sentinel differs by return type and
 //!   that is where hand-written entry points drift.
@@ -87,8 +89,13 @@
 //! ```
 
 #![doc(html_root_url = "https://docs.rs/unparser-shared/0.1.0")]
-#![cfg_attr(not(feature = "refine"), allow(rustdoc::broken_intra_doc_links))]
+#![cfg_attr(
+    not(all(feature = "refine", feature = "ai")),
+    allow(rustdoc::broken_intra_doc_links)
+)]
 
+#[cfg(feature = "ai")]
+pub mod ai;
 pub mod ffi;
 pub mod kind;
 #[cfg(feature = "refine")]
