@@ -55,9 +55,38 @@ jobs:
             echo "should_release=true" >> $GITHUB_OUTPUT
           fi
 
+  pre-publish-checks:
+    name: Pre-publish Checks
+    # The workflow_run path reaches this workflow only after CI succeeded, but
+    # workflow_dispatch short-circuits that condition in check-version -- a
+    # hand-started run would otherwise reach `cargo publish` without a single
+    # test having run in it. A crates.io version cannot be withdrawn, only
+    # yanked, so the checks that gate publishing have to live in this workflow
+    # rather than depend on a sibling one having passed.
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run tests (default features)
+        run: cargo test
+
+      - name: Run tests (all features)
+        run: cargo test --all-features
+
+      # Catches what the test suite cannot: a crate that compiles in the
+      # workspace but does not package (missing include, path dependency,
+      # unpublished dependency version).
+      - name: Verify the crate packages cleanly
+        run: cargo publish --dry-run
+
   create-release:
     name: Create Release
-    needs: check-version
+    needs: [check-version, pre-publish-checks]
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     permissions:
