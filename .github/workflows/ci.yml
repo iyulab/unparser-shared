@@ -244,6 +244,28 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --all-features --no-deps
 
+  # Every parser crate depends on this one, so an advisory here is an advisory
+  # in all of them. The parser repos have audited their dependencies since day
+  # one; this crate — the one they all share — did not, which had the priority
+  # backwards. No .cargo/audit.toml accompanies this job: the advisories the
+  # parser repos accept all come from self_update, a CLI-only dependency this
+  # crate does not have, so there is nothing to carry over.
+  security-audit:
+    name: Security Audit
+    needs: [no-dependencies, version-sync]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Prebuilt binary — avoids compiling cargo-audit on every run.
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Audit dependencies
+        run: cargo audit
+
   # Catches what only surfaces at packaging time: a file the manifest excludes
   # by accident, or metadata crates.io rejects. Publishing is deliberate and
   # manual — nothing here uploads anything.
