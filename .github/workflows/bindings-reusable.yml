@@ -1,0 +1,401 @@
+name: Build and Publish Bindings (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      package-name:
+        description: 'Rust crate name (also the Python import name), e.g. unhwp'
+        required: true
+        type: string
+      csharp-project-name:
+        description: 'PascalCase C# project name, e.g. Unhwp'
+        required: true
+        type: string
+      nuget-staging-mode:
+        description: 'How the native library is staged for C# tests: "flat" or "runtime-rid"'
+        required: true
+        type: string
+      nuget-test-matrix:
+        description: 'JSON array of {os, artifact, runtime} entries for the NuGet test matrix'
+        required: true
+        type: string
+      validate-packed-nuget:
+        description: 'Swap ProjectReference for the packed PackageReference before testing'
+        required: false
+        type: boolean
+        default: false
+      publish:
+        description: 'Publish to PyPI/NuGet after build'
+        required: true
+        type: boolean
+    secrets:
+      PYPI_API_TOKEN:
+        required: true
+      NUGET_API_KEY:
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-native:
+    name: Build Native Libraries
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: lib${{ inputs.package-name }}.so
+            runtime: linux-x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: lib${{ inputs.package-name }}.so
+            runtime: linux-musl-x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: ${{ inputs.package-name }}.dll
+            runtime: win-x64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: lib${{ inputs.package-name }}.dylib
+            runtime: osx-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: lib${{ inputs.package-name }}.dylib
+            runtime: osx-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl-tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build native library
+        run: cargo build --release --features ffi --target ${{ matrix.target }}
+        env:
+          RUSTFLAGS: ${{ contains(matrix.target, 'musl') && '-C target-feature=-crt-static' || '' }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.runtime }}
+          path: target/${{ matrix.target }}/release/${{ matrix.artifact }}
+          retention-days: 7
+
+  build-python:
+    name: Build Python Wheel
+    needs: build-native
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download all native libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: ./native-libs/
+
+      - name: Copy native libraries to package
+        run: |
+          mkdir -p bindings/python/src/${{ inputs.package-name }}/lib/linux-x64
+          mkdir -p bindings/python/src/${{ inputs.package-name }}/lib/linux-musl-x64
+          mkdir -p bindings/python/src/${{ inputs.package-name }}/lib/win-x64
+          mkdir -p bindings/python/src/${{ inputs.package-name }}/lib/osx-x64
+          mkdir -p bindings/python/src/${{ inputs.package-name }}/lib/osx-arm64
+          cp ./native-libs/native-linux-x64/* bindings/python/src/${{ inputs.package-name }}/lib/linux-x64/
+          cp ./native-libs/native-linux-musl-x64/* bindings/python/src/${{ inputs.package-name }}/lib/linux-musl-x64/
+          cp ./native-libs/native-win-x64/* bindings/python/src/${{ inputs.package-name }}/lib/win-x64/
+          cp ./native-libs/native-osx-x64/* bindings/python/src/${{ inputs.package-name }}/lib/osx-x64/
+          cp ./native-libs/native-osx-arm64/* bindings/python/src/${{ inputs.package-name }}/lib/osx-arm64/
+          echo "Native libraries:"
+          find bindings/python/src/${{ inputs.package-name }}/lib -type f
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build wheel
+
+      - name: Build wheel
+        working-directory: bindings/python
+        run: python -m build
+
+      - name: Verify wheel
+        run: |
+          pip install bindings/python/dist/*.whl
+          python -c "import ${{ inputs.package-name }}; print('Import OK')"
+          unzip -l bindings/python/dist/*.whl | head -50
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheel
+          path: bindings/python/dist/*.whl
+          retention-days: 7
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-sdist
+          path: bindings/python/dist/*.tar.gz
+          retention-days: 7
+
+  build-nuget:
+    name: Build NuGet Package
+    needs: build-native
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Create runtime directories
+        run: |
+          mkdir -p bindings/csharp/${{ inputs.csharp-project-name }}/runtimes/win-x64/native
+          mkdir -p bindings/csharp/${{ inputs.csharp-project-name }}/runtimes/linux-x64/native
+          mkdir -p bindings/csharp/${{ inputs.csharp-project-name }}/runtimes/linux-musl-x64/native
+          mkdir -p bindings/csharp/${{ inputs.csharp-project-name }}/runtimes/osx-x64/native
+          mkdir -p bindings/csharp/${{ inputs.csharp-project-name }}/runtimes/osx-arm64/native
+
+      - name: Download Windows native library
+        uses: actions/download-artifact@v4
+        with:
+          name: native-win-x64
+          path: bindings/csharp/${{ inputs.csharp-project-name }}/runtimes/win-x64/native/
+
+      - name: Download Linux native library
+        uses: actions/download-artifact@v4
+        with:
+          name: native-linux-x64
+          path: bindings/csharp/${{ inputs.csharp-project-name }}/runtimes/linux-x64/native/
+
+      - name: Download Linux musl native library
+        uses: actions/download-artifact@v4
+        with:
+          name: native-linux-musl-x64
+          path: bindings/csharp/${{ inputs.csharp-project-name }}/runtimes/linux-musl-x64/native/
+
+      - name: Download macOS x64 native library
+        uses: actions/download-artifact@v4
+        with:
+          name: native-osx-x64
+          path: bindings/csharp/${{ inputs.csharp-project-name }}/runtimes/osx-x64/native/
+
+      - name: Download macOS ARM64 native library
+        uses: actions/download-artifact@v4
+        with:
+          name: native-osx-arm64
+          path: bindings/csharp/${{ inputs.csharp-project-name }}/runtimes/osx-arm64/native/
+
+      - name: Build NuGet package
+        working-directory: bindings/csharp
+        run: dotnet pack ${{ inputs.csharp-project-name }}/${{ inputs.csharp-project-name }}.csproj -c Release -o ./artifacts
+
+      - name: Upload NuGet package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-package
+          path: bindings/csharp/artifacts/*.nupkg
+          retention-days: 7
+
+  publish-pypi:
+    name: Publish to PyPI
+    # Depends on test-python as well as build-python: a wheel that fails its
+    # own binding tests must never reach the registry. Without this edge the
+    # two jobs are siblings and a red test suite still publishes.
+    needs: [build-python, test-python]
+    runs-on: ubuntu-latest
+    if: ${{ inputs.publish }}
+
+    steps:
+      - name: Download Python wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: python-wheel
+          path: dist/
+
+      - name: Download Python sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdist
+          path: dist/
+
+      - name: Verify distributions
+        run: |
+          echo "Files to upload:"
+          ls -la dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: dist/
+          skip-existing: true
+
+  publish-nuget:
+    name: Publish to NuGet
+    # Same gate as publish-pypi: the packed package must pass its tests first.
+    needs: [build-nuget, test-nuget]
+    runs-on: ubuntu-latest
+    if: ${{ inputs.publish }}
+
+    steps:
+      - name: Download NuGet package
+        uses: actions/download-artifact@v4
+        with:
+          name: nuget-package
+          path: ./
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish to NuGet
+        run: dotnet nuget push "*.nupkg" --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+  test-python:
+    name: Test Python Bindings
+    needs: build-python
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.11']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: python-wheel
+          path: ./wheels/
+
+      - name: Install package
+        shell: bash
+        run: |
+          pip install pytest
+          pip install ./wheels/*.whl
+
+      - name: Run tests
+        working-directory: bindings/python
+        shell: bash
+        run: pytest tests/ -v
+
+  test-nuget:
+    name: Test NuGet Package
+    needs: build-nuget
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include: ${{ fromJSON(inputs.nuget-test-matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Download NuGet package
+        uses: actions/download-artifact@v4
+        with:
+          name: nuget-package
+          path: ./packages/
+
+      - name: Download native library
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ./native-lib/
+
+      - name: Create local NuGet source
+        if: ${{ inputs.validate-packed-nuget }}
+        run: dotnet nuget add source "${{ github.workspace }}/packages" -n local
+
+      - name: Switch test project to the packed NuGet package
+        if: ${{ inputs.validate-packed-nuget }}
+        shell: bash
+        run: |
+          NUPKG=$(ls packages/*.nupkg | head -1)
+          VERSION=$(basename "$NUPKG" | sed 's/${{ inputs.csharp-project-name }}\.\(.*\)\.nupkg/\1/')
+          echo "Using ${{ inputs.csharp-project-name }} version: $VERSION"
+          # Replace ProjectReference with PackageReference in test project
+          # Use wildcard pattern to match any path separator (/ or \)
+          sed -i.bak 's|<ProjectReference Include="[^"]*${{ inputs.csharp-project-name }}\.csproj"[^/]*/\?>|<PackageReference Include="${{ inputs.csharp-project-name }}" Version="'"$VERSION"'" />|g' bindings/csharp/${{ inputs.csharp-project-name }}.Tests/${{ inputs.csharp-project-name }}.Tests.csproj
+          echo "Updated test project:"
+          cat bindings/csharp/${{ inputs.csharp-project-name }}.Tests/${{ inputs.csharp-project-name }}.Tests.csproj
+
+      - name: Build test project
+        working-directory: bindings/csharp
+        run: dotnet build ${{ inputs.csharp-project-name }}.Tests/${{ inputs.csharp-project-name }}.Tests.csproj -c Release
+
+      - name: Stage native library (flat)
+        if: ${{ inputs.nuget-staging-mode == 'flat' }}
+        shell: bash
+        run: |
+          # Find all test output directories and copy native library
+          find bindings/csharp/${{ inputs.csharp-project-name }}.Tests/bin/Release -type d -name "net*" | while read dir; do
+            cp ./native-lib/* "$dir/"
+            echo "Copied native library to $dir"
+          done
+
+      - name: Stage native library at shipping runtime path (Unix)
+        if: ${{ inputs.nuget-staging-mode == 'runtime-rid' && matrix.os != 'windows-latest' }}
+        shell: bash
+        run: |
+          # NativeLibraryTests asserts the library is loaded from the
+          # runtimes/<rid>/native/ shipping layout (not a flat copy).
+          # Staging to that location in CI matches the local-dev behavior
+          # of NativeTestSupport.EnsureNativeLibraryPrepared().
+          find bindings/csharp/${{ inputs.csharp-project-name }}.Tests/bin/Release -type d -name "net*" | while read dir; do
+            runtime_dir="$dir/runtimes/${{ matrix.runtime }}/native"
+            mkdir -p "$runtime_dir"
+            cp ./native-lib/* "$runtime_dir/"
+            echo "Staged native library at $runtime_dir"
+            ls -la "$runtime_dir"
+          done
+
+      - name: Stage native library at shipping runtime path (Windows)
+        if: ${{ inputs.nuget-staging-mode == 'runtime-rid' && matrix.os == 'windows-latest' }}
+        shell: pwsh
+        run: |
+          # Stage the native library under runtimes/<rid>/native/ so it does
+          # not collide with the managed assembly at the flat bin root
+          # (case-insensitive Windows filesystem).
+          Get-ChildItem -Path "bindings/csharp/${{ inputs.csharp-project-name }}.Tests/bin/Release" -Directory -Recurse | Where-Object { $_.Name -like "net*" } | ForEach-Object {
+            $runtimeDir = Join-Path $_.FullName "runtimes/${{ matrix.runtime }}/native"
+            New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
+            $srcFile = Get-ChildItem "./native-lib/*" | Select-Object -First 1
+            $destFile = Join-Path $runtimeDir "${{ inputs.package-name }}.dll"
+            Copy-Item $srcFile.FullName -Destination $destFile -Force
+            Write-Host "Staged native library at $destFile"
+          }
+
+      - name: Run tests
+        working-directory: bindings/csharp
+        run: dotnet test ${{ inputs.csharp-project-name }}.Tests/${{ inputs.csharp-project-name }}.Tests.csproj -c Release --no-build
