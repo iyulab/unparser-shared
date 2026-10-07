@@ -182,6 +182,7 @@ jobs:
     env:
       ARCHIVE: lib${{ inputs.package-name }}-${{ matrix.platform }}-${{ needs.check-version.outputs.version }}
       LIB: ${{ matrix.lib_prefix }}${{ inputs.package-name }}${{ matrix.lib_ext }}
+      HEADER: ${{ inputs.package-name }}.h
 
     steps:
       - uses: actions/checkout@v4
@@ -202,18 +203,30 @@ jobs:
       - name: Build FFI library
         run: cargo build --release --features ffi --target ${{ matrix.target }}
 
+      # A C-ABI library is only usable with its declarations, so the header ships in the same
+      # archive. Its absence fails the job -- and with it the release, which requires
+      # build-ffi's success by name -- rather than attaching a library nobody can compile against.
+      - name: Stage C header
+        shell: bash
+        run: |
+          if [ ! -f "include/$HEADER" ]; then
+            echo "::error::include/$HEADER is missing -- an FFI archive needs its C header"
+            exit 1
+          fi
+          cp "include/$HEADER" "target/${{ matrix.target }}/release/"
+
       - name: Create archive (Unix)
         if: matrix.archive_ext == 'tar.gz'
         run: |
           cd target/${{ matrix.target }}/release
-          tar -czvf "$ARCHIVE.tar.gz" "$LIB"
+          tar -czvf "$ARCHIVE.tar.gz" "$LIB" "$HEADER"
 
       - name: Create archive (Windows)
         if: matrix.archive_ext == 'zip'
         shell: pwsh
         run: |
           cd target/${{ matrix.target }}/release
-          Compress-Archive -Path "$env:LIB" -DestinationPath "$env:ARCHIVE.zip"
+          Compress-Archive -Path "$env:LIB", "$env:HEADER" -DestinationPath "$env:ARCHIVE.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
