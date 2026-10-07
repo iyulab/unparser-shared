@@ -75,8 +75,32 @@ jobs:
     outputs:
       version: ${{ steps.get_version.outputs.version }}
       should_release: ${{ steps.check_release.outputs.should_release }}
+      cli_targets: ${{ steps.plan_cli.outputs.cli_targets }}
     steps:
       - uses: actions/checkout@v4
+
+      # The CLI archives to build, as the build-release matrix. The musl one is built only
+      # where asked for. Deciding that here, not with a matrix `exclude`, is what keeps the
+      # matrix valid: an `exclude` on a matrix made only of `include` entries matches no
+      # dimension, and GitHub then refuses to create the job at all -- the release fails
+      # before anything is built (seen on the first real run of this pipeline).
+      - name: Plan CLI builds
+        id: plan_cli
+        env:
+          CLI_MUSL: ${{ inputs.cli-musl }}
+        run: |
+          gnu='{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu","platform":"linux-x86_64","exe":"","archive_ext":"tar.gz"}'
+          musl='{"os":"ubuntu-latest","target":"x86_64-unknown-linux-musl","platform":"linux-x86_64-musl","exe":"","archive_ext":"tar.gz"}'
+          win='{"os":"windows-latest","target":"x86_64-pc-windows-msvc","platform":"windows-x86_64","exe":".exe","archive_ext":"zip"}'
+          mac='{"os":"macos-latest","target":"x86_64-apple-darwin","platform":"macos-x86_64","exe":"","archive_ext":"tar.gz"}'
+          arm='{"os":"macos-latest","target":"aarch64-apple-darwin","platform":"macos-aarch64","exe":"","archive_ext":"tar.gz"}'
+          if [ "$CLI_MUSL" = "true" ]; then
+            targets="[$gnu,$musl,$win,$mac,$arm]"
+          else
+            targets="[$gnu,$win,$mac,$arm]"
+          fi
+          echo "cli_targets=$targets" >> "$GITHUB_OUTPUT"
+          echo "CLI targets: $targets"
 
       - name: Get version from Cargo.toml
         id: get_version
@@ -115,16 +139,8 @@ jobs:
       contents: read
     strategy:
       matrix:
-        include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, platform: linux-x86_64, exe: '', archive_ext: tar.gz }
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, platform: linux-x86_64-musl, exe: '', archive_ext: tar.gz }
-          - { os: windows-latest, target: x86_64-pc-windows-msvc, platform: windows-x86_64, exe: .exe, archive_ext: zip }
-          - { os: macos-latest, target: x86_64-apple-darwin, platform: macos-x86_64, exe: '', archive_ext: tar.gz }
-          - { os: macos-latest, target: aarch64-apple-darwin, platform: macos-aarch64, exe: '', archive_ext: tar.gz }
-        # The musl CLI archive is for download by hand (no self-update picks it), so it is
-        # built only where asked for.
-        exclude:
-          - target: ${{ inputs.cli-musl && 'none' || 'x86_64-unknown-linux-musl' }}
+        # Planned by check-version (see there for why not an `exclude`).
+        include: ${{ fromJSON(needs.check-version.outputs.cli_targets) }}
     env:
       ARCHIVE: ${{ inputs.package-name }}-${{ matrix.platform }}-${{ needs.check-version.outputs.version }}
 
