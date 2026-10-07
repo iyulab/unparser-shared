@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+
+- `markdown::emphasis_span` — the part of a styled run that emphasis delimiters (`*`, `**`,
+  `~~`) can wrap, given the characters the run lands between. Whitespace stays outside, and so
+  does punctuation that touches a letter or digit: an italic `", s"` after `32` is written
+  `32, *s*`, not `32*, s*`, which CommonMark does not read as emphasis. A run with nothing
+  wrappable gets `None`. Backslash escapes are never split. `std`-only, in the crate root.
+
 ## 0.2.0
 
 ### Added
