@@ -18,9 +18,11 @@
 //!
 //! - **No domain content.** No document model, no rendering, no format knowledge. If a
 //!   type would mention a page, a paragraph or a spreadsheet cell, it belongs upstream.
+//!   Facts about the *output* syntax are not domain content: where CommonMark lets an
+//!   emphasis delimiter stand is the same answer for every writer ([`markdown`]).
 //! - **The crate root has no dependencies.** Three published cdylibs link it statically, so
-//!   a dependency here is a dependency in all of them. Everything in [`ffi`], [`kind`] and
-//!   [`scaffold`] is `std`-only. Optional capabilities each bring their own dependency
+//!   a dependency here is a dependency in all of them. Everything in [`ffi`], [`kind`], [`markdown`]
+//!   and [`scaffold`] is `std`-only. Optional capabilities each bring their own dependency
 //!   behind their own feature flag instead of widening this baseline.
 //!
 //! It is `std`-only at the root — [`ffi::LastErrorSlot`] holds a `CString` and lives in a
@@ -33,6 +35,8 @@
 //!   future ones from colliding. Read its docs before adding a kind anywhere.
 //! - [`ffi`] — [`ffi::LastErrorSlot`], the [`ffi::catch`] panic guard, and the macros that
 //!   export the ABI over them.
+//! - [`markdown`] — CommonMark syntax facts the Markdown writers share:
+//!   [`markdown::emphasis_span`], the part of a styled run emphasis delimiters can wrap.
 //! - [`refine`] *(feature `refine`)* — a lossless, idempotent markdown shape-refinement pass:
 //!   table shape normalization, ordered-list renumbering, link/image path normalization,
 //!   frontmatter normalization, and section anchors. Composes with a renderer's own
@@ -98,6 +102,7 @@
 pub mod ai;
 pub mod ffi;
 pub mod kind;
+pub mod markdown;
 #[cfg(feature = "refine")]
 pub mod refine;
 pub mod scaffold;
