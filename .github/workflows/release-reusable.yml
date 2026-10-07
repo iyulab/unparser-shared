@@ -1,0 +1,465 @@
+name: Release (reusable)
+
+# The release pipeline of the parser crates, one definition for all of them. Each parser's
+# release.yml keeps its trigger (CI success on main, or a dispatch) and calls this with what
+# differs between them. Every publish here sits behind binding-tests: create-release needs
+# it, and crates.io and npm need create-release.
+
+on:
+  workflow_call:
+    inputs:
+      package-name:
+        description: 'Rust crate name, e.g. unhwp. The CLI crate is <name>-cli, the wasm crate <name>-wasm, the npm package @iyulab/<name>.'
+        required: true
+        type: string
+      version:
+        description: 'Version to release; empty uses the Cargo.toml version'
+        required: false
+        type: string
+        default: ''
+      cli-musl:
+        description: 'Also attach a musl-linked Linux CLI archive (<name>-linux-x86_64-musl)'
+        required: false
+        type: boolean
+        default: false
+      ffi-archives:
+        description: 'Also attach prebuilt C-ABI libraries (lib<name>-<os>-<arch>) to the release'
+        required: false
+        type: boolean
+        default: false
+      npm-readme:
+        description: 'README copied into the npm package before publishing; empty when the wasm crate directory holds its own'
+        required: false
+        type: string
+        default: ''
+      csharp-project-name:
+        description: 'PascalCase C# project name, for binding-tests'
+        required: true
+        type: string
+      nuget-staging-mode:
+        description: 'For binding-tests: "flat" or "runtime-rid"'
+        required: true
+        type: string
+      nuget-test-matrix:
+        description: 'For binding-tests: JSON array of {os, artifact, runtime}'
+        required: true
+        type: string
+      validate-packed-nuget:
+        description: 'For binding-tests: test the packed .nupkg'
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      CARGO_REGISTRY_TOKEN:
+        required: true
+      NPM_TOKEN:
+        required: true
+      PYPI_API_TOKEN:
+        required: true
+      NUGET_API_KEY:
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-version:
+    name: Check Version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+      should_release: ${{ steps.check_release.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version from Cargo.toml
+        id: get_version
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          if [ -n "$REQUESTED" ]; then
+            VERSION_NUM="$REQUESTED"
+          else
+            VERSION_NUM=$(grep -m1 '^version = ' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          fi
+          echo "version=v${VERSION_NUM}" >> $GITHUB_OUTPUT
+          echo "Version: v${VERSION_NUM}"
+
+      - name: Check if release exists
+        id: check_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=${{ steps.get_version.outputs.version }}
+          if gh release view "$VERSION" > /dev/null 2>&1; then
+            echo "Release $VERSION already exists, skipping"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          else
+            echo "Release $VERSION does not exist, proceeding"
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          fi
+
+  build-release:
+    name: Build Release
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, platform: linux-x86_64, exe: '', archive_ext: tar.gz }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, platform: linux-x86_64-musl, exe: '', archive_ext: tar.gz }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, platform: windows-x86_64, exe: .exe, archive_ext: zip }
+          - { os: macos-latest, target: x86_64-apple-darwin, platform: macos-x86_64, exe: '', archive_ext: tar.gz }
+          - { os: macos-latest, target: aarch64-apple-darwin, platform: macos-aarch64, exe: '', archive_ext: tar.gz }
+        # The musl CLI archive is for download by hand (no self-update picks it), so it is
+        # built only where asked for.
+        exclude:
+          - target: ${{ inputs.cli-musl && 'none' || 'x86_64-unknown-linux-musl' }}
+    env:
+      ARCHIVE: ${{ inputs.package-name }}-${{ matrix.platform }}-${{ needs.check-version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl-tools (Linux musl)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} -p ${{ inputs.package-name }}-cli
+
+      - name: Create archive (Unix)
+        if: matrix.archive_ext == 'tar.gz'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar -czvf "$ARCHIVE.tar.gz" ${{ inputs.package-name }}${{ matrix.exe }}
+
+      - name: Create archive (Windows)
+        if: matrix.archive_ext == 'zip'
+        shell: pwsh
+        run: |
+          cd target/${{ matrix.target }}/release
+          Compress-Archive -Path ${{ inputs.package-name }}${{ matrix.exe }} -DestinationPath "$env:ARCHIVE.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.package-name }}-${{ matrix.platform }}
+          path: target/${{ matrix.target }}/release/${{ env.ARCHIVE }}.${{ matrix.archive_ext }}
+          retention-days: 1
+
+  build-ffi:
+    name: Build FFI Library
+    needs: check-version
+    if: inputs.ffi-archives && needs.check-version.outputs.should_release == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, platform: linux-x86_64, lib_prefix: lib, lib_ext: .so, archive_ext: tar.gz }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, platform: linux-x86_64-musl, lib_prefix: lib, lib_ext: .so, archive_ext: tar.gz }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, platform: windows-x86_64, lib_prefix: '', lib_ext: .dll, archive_ext: zip }
+          - { os: macos-latest, target: x86_64-apple-darwin, platform: macos-x86_64, lib_prefix: lib, lib_ext: .dylib, archive_ext: tar.gz }
+          - { os: macos-latest, target: aarch64-apple-darwin, platform: macos-aarch64, lib_prefix: lib, lib_ext: .dylib, archive_ext: tar.gz }
+    env:
+      ARCHIVE: lib${{ inputs.package-name }}-${{ matrix.platform }}-${{ needs.check-version.outputs.version }}
+      LIB: ${{ matrix.lib_prefix }}${{ inputs.package-name }}${{ matrix.lib_ext }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl-tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Set RUSTFLAGS for musl
+        if: contains(matrix.target, 'musl')
+        run: echo "RUSTFLAGS=-C target-feature=-crt-static" >> $GITHUB_ENV
+
+      - name: Build FFI library
+        run: cargo build --release --features ffi --target ${{ matrix.target }}
+
+      - name: Create archive (Unix)
+        if: matrix.archive_ext == 'tar.gz'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar -czvf "$ARCHIVE.tar.gz" "$LIB"
+
+      - name: Create archive (Windows)
+        if: matrix.archive_ext == 'zip'
+        shell: pwsh
+        run: |
+          cd target/${{ matrix.target }}/release
+          Compress-Archive -Path "$env:LIB" -DestinationPath "$env:ARCHIVE.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lib${{ inputs.package-name }}-${{ matrix.platform }}
+          path: target/${{ matrix.target }}/release/${{ env.ARCHIVE }}.${{ matrix.archive_ext }}
+          retention-days: 1
+
+  binding-tests:
+    # Pre-release gate. The bindings are otherwise built, tested and published by the
+    # parser's bindings.yml, which only starts once this workflow has created the GitHub
+    # Release and pushed to crates.io -- far too late to stop a bad release. The same
+    # reusable workflow runs here with publish disabled, upstream of every irreversible
+    # publish step.
+    name: Binding Tests
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    uses: iyulab/unparser-shared/.github/workflows/bindings-reusable.yml@main
+    with:
+      package-name: ${{ inputs.package-name }}
+      csharp-project-name: ${{ inputs.csharp-project-name }}
+      nuget-staging-mode: ${{ inputs.nuget-staging-mode }}
+      nuget-test-matrix: ${{ inputs.nuget-test-matrix }}
+      validate-packed-nuget: ${{ inputs.validate-packed-nuget }}
+      publish: false
+    permissions:
+      contents: read
+    secrets: inherit
+
+  create-release:
+    name: Create Release
+    needs: [check-version, build-release, build-ffi, binding-tests]
+    # build-ffi is skipped where no FFI archives are asked for, and a skipped need would
+    # skip this job too -- so the default success rule is replaced by naming each gate's
+    # success. Every gate is named: a gate left out of this condition no longer blocks.
+    if: |
+      !cancelled() &&
+      needs.check-version.outputs.should_release == 'true' &&
+      needs.build-release.result == 'success' &&
+      needs.binding-tests.result == 'success' &&
+      (needs.build-ffi.result == 'success' || (!inputs.ffi-archives && needs.build-ffi.result == 'skipped'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Only the CLI (and FFI) archives belong on the release. binding-tests runs in this
+      # same workflow run and uploads native-*/python-*/nuget-package artifacts of its own;
+      # an unfiltered download would attach those too.
+      - name: Download CLI archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ inputs.package-name }}-*
+          path: artifacts
+
+      - name: Download FFI archives
+        if: inputs.ffi-archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lib${{ inputs.package-name }}-*
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.check-version.outputs.version }}
+          name: Release ${{ needs.check-version.outputs.version }}
+          files: |
+            artifacts/**/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(needs.check-version.outputs.version, 'alpha') || contains(needs.check-version.outputs.version, 'beta') || contains(needs.check-version.outputs.version, 'rc') }}
+
+      - name: Delete artifacts after release
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: |
+            ${{ inputs.package-name }}-*
+            native-*
+            python-wheel
+            python-sdist
+            nuget-package
+
+      - name: Delete FFI artifacts after release
+        if: inputs.ffi-archives
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: lib${{ inputs.package-name }}-*
+
+  publish-crates:
+    name: Publish to crates.io
+    needs: [check-version, create-release]
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      PACKAGE: ${{ inputs.package-name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Only the "already uploaded" case is tolerated (a re-run of a version that got
+      # through); every other failure fails the job. These steps once carried
+      # `continue-on-error: true`, which made a failed upload look like a success.
+      - name: Publish library
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -o pipefail
+          if cargo publish -p "$PACKAGE" 2>&1 | tee "$RUNNER_TEMP/publish-lib.log"; then
+            exit 0
+          fi
+          if grep -qiE 'already (uploaded|exists)' "$RUNNER_TEMP/publish-lib.log"; then
+            echo "::notice::$PACKAGE is already on crates.io at this version"
+            exit 0
+          fi
+          exit 1
+
+      - name: Wait for crates.io index update
+        run: sleep 30
+
+      - name: Publish CLI
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -o pipefail
+          if cargo publish -p "$PACKAGE-cli" 2>&1 | tee "$RUNNER_TEMP/publish-cli.log"; then
+            exit 0
+          fi
+          if grep -qiE 'already (uploaded|exists)' "$RUNNER_TEMP/publish-cli.log"; then
+            echo "::notice::$PACKAGE-cli is already on crates.io at this version"
+            exit 0
+          fi
+          exit 1
+
+  publish-npm:
+    name: Publish npm (@iyulab/${{ inputs.package-name }})
+    needs: [check-version, create-release]
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      PACKAGE: ${{ inputs.package-name }}
+      README: ${{ inputs.npm-readme }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # registry-url is required: it writes the .npmrc that maps NODE_AUTH_TOKEN to registry
+      # auth. Without it `npm publish` fails with ENEEDAUTH even when the token is set.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      # The key the CI wasm job and the pages workflow use, so a release right after CI
+      # finds the cache warm.
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-wasm-
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM package
+        run: wasm-pack build "$PACKAGE-wasm" --target bundler --out-dir pkg
+
+      # wasm-pack names the package after the crate (`<name>-wasm`); the scoped name must be
+      # set explicitly, or the package lands on npm under the wrong unscoped name.
+      - name: Set scoped npm package name
+        run: |
+          jq --arg name "@iyulab/$PACKAGE" '.name = $name' "$PACKAGE-wasm/pkg/package.json" > "$RUNNER_TEMP/pkg.json"
+          mv "$RUNNER_TEMP/pkg.json" "$PACKAGE-wasm/pkg/package.json"
+
+      # The README is copied in from `npm-readme` when given; otherwise it is the wasm crate
+      # directory's own, which wasm-pack has already picked up. Either way the package must
+      # carry one -- a package without was published for the whole life of one of these.
+      - name: Copy README and LICENSE into pkg
+        run: |
+          if [ -n "$README" ]; then
+            cp "$README" "$PACKAGE-wasm/pkg/README.md"
+          fi
+          test -f "$PACKAGE-wasm/pkg/README.md"
+          cp LICENSE "$PACKAGE-wasm/pkg/"
+
+      - name: Publish to npm
+        run: wasm-pack publish "$PACKAGE-wasm/pkg" --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  cleanup-old-releases:
+    name: Cleanup Old Releases
+    # After the new release is published; cleanup is independent of the registry publishes.
+    needs: [check-version, create-release]
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Delete releases and tags beyond the 10 most recent
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Keep the 10 newest releases and delete the rest; --cleanup-tag removes the git
+          # tag too, so the release list and the tag list both stay bounded.
+          mapfile -t OLD < <(
+            gh release list -R "$REPO" --limit 100 --json tagName,createdAt \
+              | jq -r 'sort_by(.createdAt) | reverse | .[10:] | .[].tagName'
+          )
+
+          if [ ${#OLD[@]} -eq 0 ]; then
+            echo "Nothing to clean up (<=10 releases exist)."
+            exit 0
+          fi
+
+          echo "Deleting ${#OLD[@]} old release(s):"
+          printf '  %s\n' "${OLD[@]}"
+
+          for tag in "${OLD[@]}"; do
+            gh release delete "$tag" --yes --cleanup-tag -R "$REPO"
+          done
