@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+
+- `markdown::image(alt, destination, in_table_cell)` — a picture as `![alt](destination)`, with
+  the description flattened to one line (every whitespace run, blank lines included, becomes
+  one space) and the characters that would end or change the link text escaped: `\`, `[`, `]`,
+  `` ` ``, `<`, and an `&` that starts a character reference; `|` too inside a table cell.
+- `markdown::link_destination(url, in_table_cell)` — a link or image destination that CommonMark
+  reads back as exactly `url`: the bare form when it can carry it, otherwise `<...>` (spaces,
+  `<`/`>`, control characters, or parentheses that do not balance — `notes).txt` used to end the
+  destination at the `)`). A backslash that would escape the next character, and an `&` that
+  starts a character reference, are escaped; a line ending is percent-encoded; `|` is escaped
+  inside a table cell. An empty URL is `<>`.
+
 ## 0.3.0
 
 ### Added
