@@ -1,9 +1,11 @@
 //! CommonMark syntax facts every Markdown writer in the family needs.
 //!
 //! Each library renders its own document model, and how it styles a run is its own business.
-//! *Where* an emphasis delimiter may stand is not — it is a property of CommonMark, and a
-//! writer that gets it wrong prints its asterisks as text. This module answers that one
-//! question so the three writers cannot drift on it.
+//! *Where* an emphasis delimiter may stand, and how text the document supplies — a picture's
+//! description, a link's target — has to be written so that it stays inside the construct it
+//! belongs to, are not: they are properties of CommonMark, and a writer that gets them wrong
+//! prints its syntax as text. This module answers those questions once so the writers cannot
+//! drift on them.
 //!
 //! `std`-only, like the rest of the crate root.
 
@@ -69,6 +71,151 @@ pub fn emphasis_span(
             .map_or(start, |(_, j)| j);
     }
     (start < end).then_some(start..end)
+}
+
+/// A picture as an inline image: `![alt](destination)`.
+///
+/// The alt text is data from the document — whatever a person typed into a description box:
+/// several lines, blank lines, brackets. Written verbatim, a blank line ends the paragraph and
+/// the image reads back as literal text plus a stray paragraph, and an unbalanced `]` ends the
+/// link text early. So the alt text is flattened to one line — every run of whitespace becomes
+/// one space, the ends trimmed — and the characters that are syntax inside link text are
+/// escaped: `\`, `[`, `]`, `` ` `` (a code span would swallow the closing bracket), `<` (raw
+/// HTML or an autolink), and an `&` that would start a character reference (`&amp;` would read
+/// back as `&`). Inside a table cell `|` is escaped too, since it would end the cell. `*` and
+/// `_` are left alone: unmatched they are literal, matched they only style the text, and
+/// neither can end the image.
+///
+/// The destination is written by [`link_destination`].
+///
+/// ```
+/// use unparser_shared::markdown::image;
+///
+/// assert_eq!(
+///     image("A view\n\nof the harbour", "img/1.png", false),
+///     "![A view of the harbour](img/1.png)"
+/// );
+/// assert_eq!(image("a [draft]", "my dir/a.png", false), r"![a \[draft\]](<my dir/a.png>)");
+/// assert_eq!(image("x | y", "a.png", true), r"![x \| y](a.png)");
+/// ```
+pub fn image(alt: &str, destination: &str, in_table_cell: bool) -> String {
+    let mut out = String::with_capacity(alt.len() + destination.len() + 5);
+    out.push_str("![");
+    for (n, word) in alt.split_whitespace().enumerate() {
+        if n > 0 {
+            out.push(' ');
+        }
+        for (i, c) in word.char_indices() {
+            match c {
+                '\\' | '[' | ']' | '`' | '<' => {
+                    out.push('\\');
+                    out.push(c);
+                }
+                '&' if starts_character_reference(&word[i + 1..]) => out.push_str("\\&"),
+                '|' if in_table_cell => out.push_str("\\|"),
+                _ => out.push(c),
+            }
+        }
+    }
+    out.push_str("](");
+    out.push_str(&link_destination(destination, in_table_cell));
+    out.push(')');
+    out
+}
+
+/// A link or image destination, written so that CommonMark reads back exactly `url` (§6.3).
+///
+/// The bare form is used when it can carry the URL: no spaces, no ASCII control characters,
+/// no `<` or `>`, and parentheses that balance — an unbalanced `)` would end the destination
+/// early, a `(` would leave it open. Anything else is written in the pointy-bracket form
+/// `<...>`, which takes spaces and any parentheses. A line ending cannot stand in either form;
+/// it is percent-encoded (`%0A`, `%0D`), the one place the URL is changed rather than
+/// escaped. In both forms a backslash that would otherwise escape the character after it — an
+/// ASCII punctuation character, or the end of the destination — is doubled; other backslashes
+/// (`C:\dir`) are literal and stay as they are. An `&` that would start a character reference
+/// is escaped, so `?a=1&amp;b` stays as written. Inside a table cell `|` is escaped, since a
+/// GFM table splits its cells before it reads links. An empty URL is `<>`.
+///
+/// A link that is not in a table cell passes `in_table_cell: false`.
+///
+/// ```
+/// use unparser_shared::markdown::link_destination;
+///
+/// assert_eq!(link_destination("https://example.com/a(b)", false), "https://example.com/a(b)");
+/// assert_eq!(link_destination("my folder/file.png", false), "<my folder/file.png>");
+/// assert_eq!(link_destination("notes).txt", false), "<notes).txt>");
+/// assert_eq!(link_destination("a<b>c", false), r"<a\<b\>c>");
+/// ```
+pub fn link_destination(url: &str, in_table_cell: bool) -> String {
+    let bare = !url.is_empty()
+        && !url
+            .chars()
+            .any(|c| c == ' ' || c == '<' || c == '>' || c.is_ascii_control())
+        && parentheses_balance(url);
+    let mut out = String::with_capacity(url.len() + 2);
+    if !bare {
+        out.push('<');
+    }
+    let mut chars = url.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            // Judged on what is written next: a line ending goes out as `%`.
+            '\\' if chars
+                .peek()
+                .is_none_or(|&(_, n)| n.is_ascii_punctuation() || n == '\n' || n == '\r') =>
+            {
+                out.push_str("\\\\")
+            }
+            '&' if starts_character_reference(&url[i + 1..]) => out.push_str("\\&"),
+            '<' | '>' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '|' if in_table_cell => out.push_str("\\|"),
+            '\n' => out.push_str("%0A"),
+            '\r' => out.push_str("%0D"),
+            _ => out.push(c),
+        }
+    }
+    if !bare {
+        out.push('>');
+    }
+    out
+}
+
+/// Whether the text after an `&` makes it a character reference (§6.2) — `name;`, `#123;` or
+/// `#x1F;` — which CommonMark would replace by the character it names.
+fn starts_character_reference(rest: &str) -> bool {
+    let Some(end) = rest.find(';') else {
+        return false;
+    };
+    let body = &rest[..end];
+    if let Some(number) = body.strip_prefix('#') {
+        return match number.strip_prefix(['x', 'X']) {
+            Some(hex) => (1..=6).contains(&hex.len()) && hex.chars().all(|c| c.is_ascii_hexdigit()),
+            None => (1..=7).contains(&number.len()) && number.chars().all(|c| c.is_ascii_digit()),
+        };
+    }
+    body.starts_with(|c: char| c.is_ascii_alphabetic())
+        && (2..=32).contains(&body.len())
+        && body.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+/// Whether every `)` closes an earlier `(` and every `(` is closed. A backslash in the URL
+/// does not shield a parenthesis: [`link_destination`] writes it as a literal backslash.
+fn parentheses_balance(url: &str) -> bool {
+    let mut depth = 0usize;
+    for c in url.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => match depth.checked_sub(1) {
+                Some(d) => depth = d,
+                None => return false,
+            },
+            _ => {}
+        }
+    }
+    depth == 0
 }
 
 /// Whitespace or punctuation — what a delimiter may touch on its outside when its inside is

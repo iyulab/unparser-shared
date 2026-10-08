@@ -47,6 +47,9 @@ thiserror = { version = "2.0", optional = true }
 
 [dev-dependencies]
 proptest = "1"
+# A CommonMark parser to read back what the `markdown` helpers write (tests only — the crate
+# root stays dependency-free).
+pulldown-cmark = { version = "0.13", default-features = false }
 # A synchronous mock HTTP server for the `ai` feature's integration tests.
 # Chosen over httpmock/wiremock specifically because both pull in tokio —
 # this crate's design goal of never propagating an async runtime applies to

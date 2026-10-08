@@ -36,7 +36,9 @@
 //! - [`ffi`] — [`ffi::LastErrorSlot`], the [`ffi::catch`] panic guard, and the macros that
 //!   export the ABI over them.
 //! - [`markdown`] — CommonMark syntax facts the Markdown writers share:
-//!   [`markdown::emphasis_span`], the part of a styled run emphasis delimiters can wrap.
+//!   [`markdown::emphasis_span`], the part of a styled run emphasis delimiters can wrap;
+//!   [`markdown::image`] and [`markdown::link_destination`], which write a picture's description
+//!   and a link's target so that they read back exactly as given.
 //! - [`refine`] *(feature `refine`)* — a lossless, idempotent markdown shape-refinement pass:
 //!   table shape normalization, ordered-list renumbering, link/image path normalization,
 //!   frontmatter normalization, and section anchors. Composes with a renderer's own
