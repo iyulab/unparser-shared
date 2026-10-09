@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `markdown::link(label, destination, title, in_table_cell)` — an inline link, with the label
+  (inline Markdown the writer has already rendered) kept inside the link whatever the writer's
+  own escaping does: an unescaped `[` or `]` is escaped (`see [3]` used to end the link text at
+  `]`), a line ending becomes a space (a blank line ended the paragraph mid-link), a trailing
+  backslash is doubled so it cannot escape the closing `]`, and inside a table cell an
+  unescaped `|` is escaped, code spans included. Code spans and the escapes the label already
+  carries are left as they are. A non-empty title is written in double quotes with `"`, a
+  backslash that would escape the next character, and an `&` that starts a character reference
+  escaped; a line ending becomes a space, and `|` is escaped inside a table cell.
+
 ## 0.4.0
 
 ### Added

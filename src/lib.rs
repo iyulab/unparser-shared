@@ -37,8 +37,9 @@
 //!   export the ABI over them.
 //! - [`markdown`] — CommonMark syntax facts the Markdown writers share:
 //!   [`markdown::emphasis_span`], the part of a styled run emphasis delimiters can wrap;
-//!   [`markdown::image`] and [`markdown::link_destination`], which write a picture's description
-//!   and a link's target so that they read back exactly as given.
+//!   [`markdown::image`], [`markdown::link`] and [`markdown::link_destination`], which write a
+//!   picture's description, a link's text and title, and a link's target so that they stay
+//!   inside the construct and read back as given.
 //! - [`refine`] *(feature `refine`)* — a lossless, idempotent markdown shape-refinement pass:
 //!   table shape normalization, ordered-list renumbering, link/image path normalization,
 //!   frontmatter normalization, and section anchors. Composes with a renderer's own

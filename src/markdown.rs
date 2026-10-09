@@ -123,6 +123,135 @@ pub fn image(alt: &str, destination: &str, in_table_cell: bool) -> String {
     out
 }
 
+/// An inline link: `[label](destination)`, or `[label](destination "title")`.
+///
+/// `label` is inline Markdown the writer has already rendered — its text escaped and styled
+/// the writer's own way (`**bold**`, `<u>…</u>`, a code span). What this adds is what keeps
+/// that Markdown *inside the link*, which no display setting may turn off:
+///
+/// - an unescaped `[` or `]` is escaped — an unbalanced `]` ends the link text early, and a
+///   `[x](y)` inside it would be a second link, which CommonMark does not nest;
+/// - a line ending becomes a space, so a blank line cannot end the paragraph mid-link;
+/// - a backslash at the very end is doubled, since it would otherwise escape the closing `]`;
+/// - inside a table cell, an unescaped `|` is escaped, code spans included — a GFM table
+///   splits its cells before it reads anything else.
+///
+/// Code spans are left as they are (apart from that `|`): a code span binds more tightly than
+/// the link's brackets, so a `]` inside one does not end the link, and a backslash inside one
+/// would be printed. Backslash escapes the label already carries (`\*`, `\[`) are kept as
+/// they are. The label is not expected to hold a link, an image, an autolink or raw HTML with
+/// a bracket in it.
+///
+/// The destination is written by [`link_destination`]. The title, when there is one and it is
+/// not empty, is written in double quotes: `"` is escaped, a backslash that would escape the
+/// character after it is doubled, an `&` that would start a character reference is escaped,
+/// a line ending becomes a space, and inside a table cell `|` is escaped.
+///
+/// ```
+/// use unparser_shared::markdown::link;
+///
+/// assert_eq!(link("see [3]", "https://example.com", None, false), r"[see \[3\]](https://example.com)");
+/// assert_eq!(link("**bold** `a]b`", "u", None, false), "[**bold** `a]b`](u)");
+/// assert_eq!(link("x", "u", Some(r#"say "hi""#), false), r#"[x](u "say \"hi\"")"#);
+/// assert_eq!(link("a | b", "u", None, true), r"[a \| b](u)");
+/// ```
+pub fn link(label: &str, destination: &str, title: Option<&str>, in_table_cell: bool) -> String {
+    let mut out = String::with_capacity(label.len() + destination.len() + 4);
+    out.push('[');
+    push_link_label(&mut out, label, in_table_cell);
+    out.push_str("](");
+    out.push_str(&link_destination(destination, in_table_cell));
+    if let Some(title) = title.filter(|t| !t.is_empty()) {
+        out.push_str(" \"");
+        let mut chars = title.char_indices().peekable();
+        while let Some((i, c)) = chars.next() {
+            match c {
+                '\\' if chars.peek().is_none_or(|&(_, n)| n.is_ascii_punctuation()) => {
+                    out.push_str("\\\\")
+                }
+                '"' => out.push_str("\\\""),
+                '&' if starts_character_reference(&title[i + 1..]) => out.push_str("\\&"),
+                '|' if in_table_cell => out.push_str("\\|"),
+                '\n' | '\r' => out.push(' '),
+                _ => out.push(c),
+            }
+        }
+        out.push('"');
+    }
+    out.push(')');
+    out
+}
+
+/// Append `label` as link text — see [`link`] for what is escaped and what is kept.
+fn push_link_label(out: &mut String, label: &str, in_table_cell: bool) {
+    let chars: Vec<char> = label.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\\' => match chars.get(i + 1) {
+                // An escape the label already carries: one unit, kept.
+                Some(&n) if n.is_ascii_punctuation() => {
+                    out.push('\\');
+                    out.push(n);
+                    i += 2;
+                    continue;
+                }
+                None => out.push_str("\\\\"),
+                Some(_) => out.push('\\'),
+            },
+            '`' => {
+                let run = chars[i..].iter().take_while(|&&b| b == '`').count();
+                if let Some(close) = closing_backticks(&chars, i + run, run) {
+                    // A code span, written as it is: no escapes inside, but a GFM cell
+                    // still splits on its `|`.
+                    for (k, &s) in chars[i..close + run].iter().enumerate() {
+                        match s {
+                            '\n' | '\r' => out.push(' '),
+                            '|' if in_table_cell && (k == 0 || chars[i + k - 1] != '\\') => {
+                                out.push_str("\\|")
+                            }
+                            _ => out.push(s),
+                        }
+                    }
+                    i = close + run;
+                } else {
+                    // No closing run of the same length: the backticks are literal.
+                    out.extend(std::iter::repeat_n('`', run));
+                    i += run;
+                }
+                continue;
+            }
+            '[' | ']' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '|' if in_table_cell => out.push_str("\\|"),
+            '\n' | '\r' => out.push(' '),
+            _ => out.push(c),
+        }
+        i += 1;
+    }
+}
+
+/// Where the backtick run of exactly `len` that closes a code span opened before `from`
+/// starts, if there is one.
+fn closing_backticks(chars: &[char], from: usize, len: usize) -> Option<usize> {
+    let mut j = from;
+    while j < chars.len() {
+        if chars[j] == '`' {
+            let run = chars[j..].iter().take_while(|&&b| b == '`').count();
+            if run == len {
+                return Some(j);
+            }
+            j += run;
+        } else {
+            j += 1;
+        }
+    }
+    None
+}
+
 /// A link or image destination, written so that CommonMark reads back exactly `url` (§6.3).
 ///
 /// The bare form is used when it can carry the URL: no spaces, no ASCII control characters,
