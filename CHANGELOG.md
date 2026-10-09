@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0
+
+### Added
+
+- `markdown::code_span(text, in_table_cell)` — a code span that reads back as exactly `text`.
+  Nothing inside a code span is escaped (a backslash there is printed), so the span is fenced
+  instead: one backtick longer than the longest run of backticks in the text, padded with a
+  space when the text starts or ends with a backtick or both starts and ends with a space. A
+  line ending becomes a space, and inside a table cell `|` is escaped. Empty text gives an empty
+  string.
+
 ## 0.5.0
 
 ### Added
