@@ -17,19 +17,6 @@ on:
         required: false
         type: string
         default: ''
-      # TODO: remove these two inputs once no caller passes them. Every release now
-      # attaches the musl CLI and the C-ABI libraries; the inputs are read by nothing and stay
-      # declared only so a caller that still passes them keeps a valid call until it is updated.
-      cli-musl:
-        description: 'Ignored -- the musl-linked Linux CLI archive is always attached'
-        required: false
-        type: boolean
-        default: true
-      ffi-archives:
-        description: 'Ignored -- the prebuilt C-ABI libraries are always attached'
-        required: false
-        type: boolean
-        default: true
       npm-readme:
         description: 'README copied into the npm package before publishing; empty when the wasm crate directory holds its own'
         required: false
