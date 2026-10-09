@@ -1,10 +1,10 @@
-//! What `markdown::image`, `markdown::link` and `markdown::link_destination` write, read back
-//! by a CommonMark parser: exactly one image or link, whose text, destination and title are the
-//! ones given.
+//! What `markdown::image`, `markdown::link`, `markdown::link_destination` and `markdown::code_span`
+//! write, read back by a CommonMark parser: exactly one image, link or code span, whose text,
+//! destination and title are the ones given.
 
 use proptest::prelude::*;
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
-use unparser_shared::markdown::{image, link, link_destination};
+use unparser_shared::markdown::{code_span, image, link, link_destination};
 
 /// The images in `markdown`, each as (alt text, destination).
 fn images(markdown: &str) -> Vec<(String, String)> {
@@ -362,5 +362,63 @@ proptest! {
             one_link(&read_back_label(&label), &expected_destination(&url), &title.replace('\n', " ")),
             "written as {:?}", md
         );
+    }
+}
+
+/// The code spans in `markdown`, as the parser reads their text back.
+fn code_spans(markdown: &str) -> Vec<String> {
+    Parser::new_ext(markdown, Options::ENABLE_TABLES)
+        .filter_map(|event| match event {
+            Event::Code(text) => Some(text.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// What a reader gives back for a code span of `text`: each line ending read as one space.
+fn read_back_code(text: &str) -> String {
+    text.replace("\r\n", " ").replace(['\r', '\n'], " ")
+}
+
+/// Code text the fencing is meant to carry through unchanged: backtick runs of every length at
+/// either end, backslashes (printed, never an escape), spaces at the ends, line endings, pipes,
+/// Markdown punctuation and letters from any script.
+fn code_text() -> impl Strategy<Value = String> {
+    prop::collection::vec(
+        prop::sample::select(vec![
+            "a", "Z", "7", " ", "  ", "\n", "\r\n", "`", "``", "```", "\\", "\\`", "|", "\\|", "[",
+            "]", "*", "_", "<b>", "&amp;", "#", "-", "가", "😀",
+        ]),
+        1..12,
+    )
+    .prop_map(|parts| parts.concat())
+}
+
+#[test]
+fn code_spans_that_need_a_longer_fence_or_padding() {
+    for text in [
+        r"C:\dir\", "a`b", "``", "`x`", " a ", "a ", "   ", "x\n\ny", "|",
+    ] {
+        let md = code_span(text, false);
+        assert_eq!(code_spans(&md), [read_back_code(text)], "written as {md:?}");
+    }
+}
+
+#[test]
+fn an_empty_code_span_writes_nothing() {
+    assert_eq!(code_span("", false), "");
+}
+
+proptest! {
+    #[test]
+    fn any_code_text_reads_back_as_one_code_span(text in code_text()) {
+        let md = format!("see {} here", code_span(&text, false));
+        prop_assert_eq!(code_spans(&md), vec![read_back_code(&text)], "written as {:?}", md);
+    }
+
+    #[test]
+    fn a_code_span_inside_a_table_cell_too(text in code_text()) {
+        let md = format!("| h |\n|---|\n| {} |\n", code_span(&text, true));
+        prop_assert_eq!(code_spans(&md), vec![read_back_code(&text)], "written as {:?}", md);
     }
 }

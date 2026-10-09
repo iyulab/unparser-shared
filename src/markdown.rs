@@ -123,6 +123,54 @@ pub fn image(alt: &str, destination: &str, in_table_cell: bool) -> String {
     out
 }
 
+/// A code span holding `text` exactly as given: CommonMark reads it back as `text`, every line
+/// ending in it read as one space.
+///
+/// Nothing is escaped inside a code span — a backslash there is printed (CommonMark §6.1), so
+/// the text is written as it is and the span is fenced instead:
+///
+/// - the fence is one backtick longer than the longest run of backticks in the text, so no run
+///   inside can close it;
+/// - one space pads each side when the text starts or ends with a backtick (it would join the
+///   fence) or both starts and ends with a space (a reader strips one from each side) — the
+///   reader strips the padding again;
+/// - a line ending becomes a space, so a blank line cannot end the paragraph mid-span;
+/// - inside a table cell `|` is escaped — a GFM table splits its cells before it reads code
+///   spans, and reads `\|` back as `|` inside them.
+///
+/// Empty text has no code span and gives an empty string.
+///
+/// ```
+/// use unparser_shared::markdown::code_span;
+///
+/// assert_eq!(code_span(r"C:\dir", false), r"`C:\dir`");
+/// assert_eq!(code_span("a`b", false), "``a`b``");
+/// assert_eq!(code_span("`x`", false), "`` `x` ``");
+/// assert_eq!(code_span(" a ", false), "`  a  `");
+/// assert_eq!(code_span("a | b", true), r"`a \| b`");
+/// assert_eq!(code_span("", false), "");
+/// ```
+pub fn code_span(text: &str, in_table_cell: bool) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    let text = text.replace("\r\n", " ").replace(['\r', '\n'], " ");
+    let longest_run = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest_run + 1);
+    let pad = text.starts_with('`')
+        || text.ends_with('`')
+        || (text.starts_with(' ')
+            && text.ends_with(' ')
+            && !text.trim_start_matches(' ').is_empty());
+    let pad = if pad { " " } else { "" };
+    let body = if in_table_cell {
+        text.replace('|', "\\|")
+    } else {
+        text
+    };
+    format!("{fence}{pad}{body}{pad}{fence}")
+}
+
 /// An inline link: `[label](destination)`, or `[label](destination "title")`.
 ///
 /// `label` is inline Markdown the writer has already rendered — its text escaped and styled
