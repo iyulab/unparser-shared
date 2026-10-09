@@ -17,16 +17,19 @@ on:
         required: false
         type: string
         default: ''
+      # TODO: remove these two inputs once no caller passes them. Every release now
+      # attaches the musl CLI and the C-ABI libraries; the inputs are read by nothing and stay
+      # declared only so a caller that still passes them keeps a valid call until it is updated.
       cli-musl:
-        description: 'Also attach a musl-linked Linux CLI archive (<name>-linux-x86_64-musl)'
+        description: 'Ignored -- the musl-linked Linux CLI archive is always attached'
         required: false
         type: boolean
-        default: false
+        default: true
       ffi-archives:
-        description: 'Also attach prebuilt C-ABI libraries (lib<name>-<os>-<arch>) to the release'
+        description: 'Ignored -- the prebuilt C-ABI libraries are always attached'
         required: false
         type: boolean
-        default: false
+        default: true
       npm-readme:
         description: 'README copied into the npm package before publishing; empty when the wasm crate directory holds its own'
         required: false
@@ -79,26 +82,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The CLI archives to build, as the build-release matrix. The musl one is built only
-      # where asked for. Deciding that here, not with a matrix `exclude`, is what keeps the
-      # matrix valid: an `exclude` on a matrix made only of `include` entries matches no
-      # dimension, and GitHub then refuses to create the job at all -- the release fails
-      # before anything is built (seen on the first real run of this pipeline).
+      # The CLI archives to build, as the build-release matrix -- every package ships the same
+      # five. Kept as a planned list rather than a matrix `exclude`: an `exclude` on a matrix made
+      # only of `include` entries matches no dimension, and GitHub then refuses to create the job
+      # at all -- the release fails before anything is built (seen on the first real run).
       - name: Plan CLI builds
         id: plan_cli
-        env:
-          CLI_MUSL: ${{ inputs.cli-musl }}
         run: |
           gnu='{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu","platform":"linux-x86_64","exe":"","archive_ext":"tar.gz"}'
           musl='{"os":"ubuntu-latest","target":"x86_64-unknown-linux-musl","platform":"linux-x86_64-musl","exe":"","archive_ext":"tar.gz"}'
           win='{"os":"windows-latest","target":"x86_64-pc-windows-msvc","platform":"windows-x86_64","exe":".exe","archive_ext":"zip"}'
           mac='{"os":"macos-latest","target":"x86_64-apple-darwin","platform":"macos-x86_64","exe":"","archive_ext":"tar.gz"}'
           arm='{"os":"macos-latest","target":"aarch64-apple-darwin","platform":"macos-aarch64","exe":"","archive_ext":"tar.gz"}'
-          if [ "$CLI_MUSL" = "true" ]; then
-            targets="[$gnu,$musl,$win,$mac,$arm]"
-          else
-            targets="[$gnu,$win,$mac,$arm]"
-          fi
+          targets="[$gnu,$musl,$win,$mac,$arm]"
           echo "cli_targets=$targets" >> "$GITHUB_OUTPUT"
           echo "CLI targets: $targets"
 
@@ -182,7 +178,7 @@ jobs:
   build-ffi:
     name: Build FFI Library
     needs: check-version
-    if: inputs.ffi-archives && needs.check-version.outputs.should_release == 'true'
+    if: needs.check-version.outputs.should_release == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     permissions:
@@ -283,7 +279,7 @@ jobs:
       needs.check-version.outputs.should_release == 'true' &&
       needs.build-release.result == 'success' &&
       needs.binding-tests.result == 'success' &&
-      (needs.build-ffi.result == 'success' || (!inputs.ffi-archives && needs.build-ffi.result == 'skipped'))
+      needs.build-ffi.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -302,7 +298,6 @@ jobs:
           path: artifacts
 
       - name: Download FFI archives
-        if: inputs.ffi-archives
         uses: actions/download-artifact@v4
         with:
           pattern: lib${{ inputs.package-name }}-*
@@ -333,7 +328,6 @@ jobs:
             nuget-package
 
       - name: Delete FFI artifacts after release
-        if: inputs.ffi-archives
         uses: geekyeggo/delete-artifact@v5
         with:
           name: lib${{ inputs.package-name }}-*
