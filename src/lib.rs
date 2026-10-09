@@ -95,7 +95,7 @@
 //! assert_eq!(mylib_last_error_kind(), kind::NONE);
 //! ```
 
-#![doc(html_root_url = "https://docs.rs/unparser-shared/0.4.0")]
+#![doc(html_root_url = "https://docs.rs/unparser-shared/0.5.0")]
 #![cfg_attr(
     not(all(feature = "refine", feature = "ai")),
     allow(rustdoc::broken_intra_doc_links)
