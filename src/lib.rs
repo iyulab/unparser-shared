@@ -19,10 +19,12 @@
 //! - **No domain content.** No document model, no rendering, no format knowledge. If a
 //!   type would mention a page, a paragraph or a spreadsheet cell, it belongs upstream.
 //!   Facts about the *output* syntax are not domain content: where CommonMark lets an
-//!   emphasis delimiter stand is the same answer for every writer ([`markdown`]).
+//!   emphasis delimiter stand is the same answer for every writer ([`markdown`]), and so is
+//!   how RFC 4180 quotes a field and where a merged cell's value goes on a CSV grid ([`csv`] —
+//!   its `Cell` is the writer's input shape, not a document model).
 //! - **The crate root has no dependencies.** Three published cdylibs link it statically, so
-//!   a dependency here is a dependency in all of them. Everything in [`ffi`], [`kind`], [`markdown`]
-//!   and [`scaffold`] is `std`-only. Optional capabilities each bring their own dependency
+//!   a dependency here is a dependency in all of them. Everything in [`csv`], [`ffi`], [`kind`],
+//!   [`markdown`] and [`scaffold`] is `std`-only. Optional capabilities each bring their own dependency
 //!   behind their own feature flag instead of widening this baseline.
 //!
 //! It is `std`-only at the root — [`ffi::LastErrorSlot`] holds a `CString` and lives in a
@@ -31,6 +33,9 @@
 //!
 //! # Modules
 //!
+//! - [`csv`] — a table as CSV (RFC 4180) or tab-separated text: [`csv::to_csv`] and
+//!   [`csv::to_delimited`] lay the rows on their grid, a merged cell's value at its top-left
+//!   position and the positions it covers empty, and quote the fields.
 //! - [`kind`] — the error-kind values the family already shares, and the bands that keep
 //!   future ones from colliding. Read its docs before adding a kind anywhere.
 //! - [`ffi`] — [`ffi::LastErrorSlot`], the [`ffi::catch`] panic guard, and the macros that
@@ -103,6 +108,7 @@
 
 #[cfg(feature = "ai")]
 pub mod ai;
+pub mod csv;
 pub mod ffi;
 pub mod kind;
 pub mod markdown;

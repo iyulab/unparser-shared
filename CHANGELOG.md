@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `csv::to_csv(rows)` and `csv::to_delimited(rows, delimiter)` — a table as CSV (RFC 4180) or
+  tab-separated text. Rows are given as `csv::Cell { text, row_span, col_span }`, a merged cell
+  recorded once on the cell that owns it; the writer lays them on the grid with the merged
+  cell's value at its top-left position and the positions it covers empty, so every record has
+  the same number of fields and no value is counted twice. A field holding the delimiter, a
+  double quote or a line break is quoted with quotes doubled; records end with CRLF.
+
 ## 0.6.0
 
 ### Added
