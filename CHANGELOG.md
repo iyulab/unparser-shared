@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0
+
+### Added
+
+- `grid::place(rows)` — where a table's cells sit: for rows given as their cells' spans
+  (`grid::Span { rows, cols }`, a merged cell recorded once on the cell that owns it), the grid
+  column each cell starts in and the table's width. A cell's index in its row is not its column
+  once a vertical span from a row above sits to its left, and a row's cell count is not the
+  table's width once a cell spans columns. The CSV writer lays tables out with it.
+
 ## 0.7.0
 
 ### Added
