@@ -36,6 +36,9 @@
 //! - [`csv`] — a table as CSV (RFC 4180) or tab-separated text: [`csv::to_csv`] and
 //!   [`csv::to_delimited`] lay the rows on their grid, a merged cell's value at its top-left
 //!   position and the positions it covers empty, and quote the fields.
+//! - [`grid`] — where a table's cells sit: [`grid::place`] gives each cell's grid column and
+//!   the table's width from the cells' spans, a merged cell recorded once on the cell that owns
+//!   it.
 //! - [`kind`] — the error-kind values the family already shares, and the bands that keep
 //!   future ones from colliding. Read its docs before adding a kind anywhere.
 //! - [`ffi`] — [`ffi::LastErrorSlot`], the [`ffi::catch`] panic guard, and the macros that
@@ -110,6 +113,7 @@
 pub mod ai;
 pub mod csv;
 pub mod ffi;
+pub mod grid;
 pub mod kind;
 pub mod markdown;
 #[cfg(feature = "refine")]

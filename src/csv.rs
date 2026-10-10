@@ -125,58 +125,26 @@ fn push_field(out: &mut String, field: &str, delimiter: char) {
     }
 }
 
-/// The rows laid out on their grid: each merged cell's text at its top-left position, the
-/// positions it covers empty, every record as wide as the widest.
+/// The rows laid out on their grid ([`crate::grid::place`]): each merged cell's text at its
+/// top-left position, the positions it covers empty, every record as wide as the table.
 fn grid<R, C, S>(rows: R) -> Vec<Vec<String>>
 where
     R: IntoIterator<Item = C>,
     C: IntoIterator<Item = Cell<S>>,
     S: AsRef<str>,
 {
-    // For each column, how many further rows a cell merged down from above still covers.
-    let mut covered: Vec<usize> = Vec::new();
-    let mut grid: Vec<Vec<String>> = Vec::new();
-    for row in rows {
-        let mut record: Vec<String> = Vec::new();
-        let mut col = 0;
-        for cell in row {
-            skip_covered(&mut covered, &mut record, &mut col);
-            record.push(cell.text.as_ref().to_string());
-            let span = cell.col_span.max(1) as usize;
-            record.extend(std::iter::repeat_n(String::new(), span - 1));
-            if covered.len() < col + span {
-                covered.resize(col + span, 0);
-            }
-            for c in &mut covered[col..col + span] {
-                *c = cell.row_span.max(1) as usize - 1;
-            }
-            col += span;
+    let rows: Vec<Vec<Cell<S>>> = rows.into_iter().map(|r| r.into_iter().collect()).collect();
+    let placement = crate::grid::place(rows.iter().map(|row| {
+        row.iter()
+            .map(|cell| crate::grid::Span::new(cell.row_span, cell.col_span))
+    }));
+    let mut grid = vec![vec![String::new(); placement.width]; rows.len()];
+    for ((record, row), columns) in grid.iter_mut().zip(&rows).zip(&placement.columns) {
+        for (cell, &col) in row.iter().zip(columns) {
+            record[col] = cell.text.as_ref().to_string();
         }
-        // Columns past the row's last cell that a cell above still covers.
-        while col < covered.len() {
-            if covered[col] > 0 {
-                covered[col] -= 1;
-            }
-            record.push(String::new());
-            col += 1;
-        }
-        grid.push(record);
-    }
-    let width = grid.iter().map(Vec::len).max().unwrap_or(0);
-    for record in &mut grid {
-        record.resize(width, String::new());
     }
     grid
-}
-
-/// Pass the columns, from `col` on, that a cell merged down from a row above still covers,
-/// leaving each one empty in `record`.
-fn skip_covered(covered: &mut [usize], record: &mut Vec<String>, col: &mut usize) {
-    while covered.get(*col).is_some_and(|&n| n > 0) {
-        covered[*col] -= 1;
-        record.push(String::new());
-        *col += 1;
-    }
 }
 
 #[cfg(test)]
