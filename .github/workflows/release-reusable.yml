@@ -3,7 +3,16 @@ name: Release (reusable)
 # The release pipeline of the parser crates, one definition for all of them. Each parser's
 # release.yml keeps its trigger (CI success on main, or a dispatch) and calls this with what
 # differs between them. Every publish here sits behind binding-tests: create-release needs
-# it, and crates.io and npm need create-release.
+# it, and crates.io, npm, PyPI and NuGet need create-release.
+#
+# This is the only place any of them is published from. The Python and NuGet packages are the
+# ones binding-tests built and tested earlier in this same run, so a release that never happened
+# publishes nothing, and what ships is exactly what passed.
+#
+# Recovery: a failed publish job is re-run with "Re-run failed jobs". Its inputs are this run's
+# artifacts, kept until the job that consumes them succeeds (and for at most the 7 days the
+# binding artifacts are retained) -- past that, the remedy is the next patch release, as it is
+# for crates.io.
 
 on:
   workflow_call:
@@ -235,11 +244,8 @@ jobs:
           retention-days: 1
 
   binding-tests:
-    # Pre-release gate. The bindings are otherwise built, tested and published by the
-    # parser's bindings.yml, which only starts once this workflow has created the GitHub
-    # Release and pushed to crates.io -- far too late to stop a bad release. The same
-    # reusable workflow runs here with publish disabled, upstream of every irreversible
-    # publish step.
+    # Pre-release gate, and the build of the Python and NuGet packages: publish-pypi and
+    # publish-nuget ship the artifacts it leaves, after create-release.
     name: Binding Tests
     needs: check-version
     if: needs.check-version.outputs.should_release == 'true'
@@ -250,10 +256,8 @@ jobs:
       nuget-staging-mode: ${{ inputs.nuget-staging-mode }}
       nuget-test-matrix: ${{ inputs.nuget-test-matrix }}
       validate-packed-nuget: ${{ inputs.validate-packed-nuget }}
-      publish: false
     permissions:
       contents: read
-    secrets: inherit
 
   create-release:
     name: Create Release
@@ -275,7 +279,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Only the CLI (and FFI) archives belong on the release. binding-tests runs in this
+      # Only the CLI and FFI archives belong on the release. binding-tests runs in this
       # same workflow run and uploads native-*/python-*/nuget-package artifacts of its own;
       # an unfiltered download would attach those too.
       - name: Download CLI archives
@@ -304,15 +308,14 @@ jobs:
           draft: false
           prerelease: ${{ contains(needs.check-version.outputs.version, 'alpha') || contains(needs.check-version.outputs.version, 'beta') || contains(needs.check-version.outputs.version, 'rc') }}
 
+      # The packages publish-pypi and publish-nuget ship stay: each of those jobs deletes its
+      # own once it has published, so a failed publish can still be re-run from them.
       - name: Delete artifacts after release
         uses: geekyeggo/delete-artifact@v5
         with:
           name: |
             ${{ inputs.package-name }}-*
             native-*
-            python-wheel
-            python-sdist
-            nuget-package
 
       - name: Delete FFI artifacts after release
         uses: geekyeggo/delete-artifact@v5
@@ -436,6 +439,75 @@ jobs:
         run: wasm-pack publish "$PACKAGE-wasm/pkg" --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [check-version, create-release]
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Download Python wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: python-wheel
+          path: dist/
+
+      - name: Download Python sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdist
+          path: dist/
+
+      - name: List distributions
+        run: ls -la dist/
+
+      # skip-existing tolerates only a re-run of a version that already got through (the same
+      # case the crates.io steps let pass) -- this job runs only for a release created above.
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: dist/
+          skip-existing: true
+
+      - name: Delete published artifacts
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: |
+            python-wheel
+            python-sdist
+
+  publish-nuget:
+    name: Publish to NuGet
+    needs: [check-version, create-release]
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Download NuGet package
+        uses: actions/download-artifact@v4
+        with:
+          name: nuget-package
+          path: ./
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # --skip-duplicate: see publish-pypi.
+      - name: Publish to NuGet
+        run: dotnet nuget push "*.nupkg" --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - name: Delete published artifacts
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: nuget-package
 
   cleanup-old-releases:
     name: Cleanup Old Releases

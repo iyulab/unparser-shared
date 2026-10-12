@@ -1,4 +1,11 @@
-name: Build and Publish Bindings (reusable)
+name: Build and Test Bindings (reusable)
+
+# Builds the native library for every shipped platform, packs the Python wheel/sdist and the
+# NuGet package around it, and tests both packages. It publishes nothing: the release pipeline
+# (release-reusable.yml) calls this as its binding-tests gate and publishes these artifacts
+# itself, after the GitHub Release exists -- so the bytes that passed here are the bytes that
+# ship. The artifact names (python-wheel, python-sdist, nuget-package, native-<rid>) are that
+# hand-off's contract.
 
 on:
   workflow_call:
@@ -24,15 +31,6 @@ on:
         required: false
         type: boolean
         default: false
-      publish:
-        description: 'Publish to PyPI/NuGet after build'
-        required: true
-        type: boolean
-    secrets:
-      PYPI_API_TOKEN:
-        required: true
-      NUGET_API_KEY:
-        required: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -41,6 +39,7 @@ jobs:
   build-native:
     name: Build Native Libraries
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -94,6 +93,7 @@ jobs:
     name: Build Python Wheel
     needs: build-native
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -157,6 +157,7 @@ jobs:
     name: Build NuGet Package
     needs: build-native
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -215,66 +216,11 @@ jobs:
           path: bindings/csharp/artifacts/*.nupkg
           retention-days: 7
 
-  publish-pypi:
-    name: Publish to PyPI
-    # Depends on test-python as well as build-python: a wheel that fails its
-    # own binding tests must never reach the registry. Without this edge the
-    # two jobs are siblings and a red test suite still publishes.
-    needs: [build-python, test-python]
-    runs-on: ubuntu-latest
-    if: ${{ inputs.publish }}
-
-    steps:
-      - name: Download Python wheel
-        uses: actions/download-artifact@v4
-        with:
-          name: python-wheel
-          path: dist/
-
-      - name: Download Python sdist
-        uses: actions/download-artifact@v4
-        with:
-          name: python-sdist
-          path: dist/
-
-      - name: Verify distributions
-        run: |
-          echo "Files to upload:"
-          ls -la dist/
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
-          packages-dir: dist/
-          skip-existing: true
-
-  publish-nuget:
-    name: Publish to NuGet
-    # Same gate as publish-pypi: the packed package must pass its tests first.
-    needs: [build-nuget, test-nuget]
-    runs-on: ubuntu-latest
-    if: ${{ inputs.publish }}
-
-    steps:
-      - name: Download NuGet package
-        uses: actions/download-artifact@v4
-        with:
-          name: nuget-package
-          path: ./
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: Publish to NuGet
-        run: dotnet nuget push "*.nupkg" --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
-
   test-python:
     name: Test Python Bindings
     needs: build-python
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
@@ -309,6 +255,7 @@ jobs:
     name: Test NuGet Package
     needs: build-nuget
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       matrix:
         include: ${{ fromJSON(inputs.nuget-test-matrix) }}
