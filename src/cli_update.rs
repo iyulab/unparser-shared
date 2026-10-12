@@ -11,8 +11,7 @@
 //!   set), or when stderr, where the notice is printed, is not a terminal.
 //! - **The update installs the tool's own archive.** A release carries the CLI archive
 //!   `<bin>-<os>-<arch>-v<version>.<ext>` and the C library archive `lib<bin>-…`, whose name
-//!   contains the CLI's. Asset names are therefore compared for equality, never by substring
-//!   ([`find_matching_asset`]).
+//!   contains the CLI's. Asset names are therefore compared for equality, never by substring.
 
 use colored::Colorize;
 use self_update::backends::github::ReleaseList;
