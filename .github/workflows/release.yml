@@ -6,11 +6,6 @@ on:
     types: [completed]
     branches: [main]
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to release (leave empty to use Cargo.toml version)'
-        required: false
-        type: string
 
 env:
   CARGO_TERM_COLOR: always
@@ -29,14 +24,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The manifest is the only source of the version: cargo publish uploads what Cargo.toml
+      # says, so a tag named anything else would mislabel it.
       - name: Get version from Cargo.toml
         id: get_version
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            VERSION_NUM="${{ inputs.version }}"
-          else
-            VERSION_NUM=$(grep -m1 '^version = ' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
-          fi
+          VERSION_NUM=$(grep -m1 '^version = ' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
           echo "version=v${VERSION_NUM}" >> $GITHUB_OUTPUT
           echo "version_num=${VERSION_NUM}" >> $GITHUB_OUTPUT
           echo "Version: v${VERSION_NUM}"

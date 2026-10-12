@@ -21,11 +21,6 @@ on:
         description: 'Rust crate name, e.g. unhwp. The CLI crate is <name>-cli, the wasm crate <name>-wasm, the npm package @iyulab/<name>.'
         required: true
         type: string
-      version:
-        description: 'Version to release; empty uses the Cargo.toml version'
-        required: false
-        type: string
-        default: ''
       npm-readme:
         description: 'README copied into the npm package before publishing; empty when the wasm crate directory holds its own'
         required: false
@@ -94,16 +89,13 @@ jobs:
           echo "cli_targets=$targets" >> "$GITHUB_OUTPUT"
           echo "CLI targets: $targets"
 
+      # The manifest is the only source of the version. Every registry publishes the version its
+      # own manifest carries, so a tag named anything else would label one version's binaries
+      # with another's number.
       - name: Get version from Cargo.toml
         id: get_version
-        env:
-          REQUESTED: ${{ inputs.version }}
         run: |
-          if [ -n "$REQUESTED" ]; then
-            VERSION_NUM="$REQUESTED"
-          else
-            VERSION_NUM=$(grep -m1 '^version = ' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
-          fi
+          VERSION_NUM=$(grep -m1 '^version = ' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
           echo "version=v${VERSION_NUM}" >> $GITHUB_OUTPUT
           echo "Version: v${VERSION_NUM}"
 
