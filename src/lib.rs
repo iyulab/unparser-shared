@@ -54,6 +54,9 @@
 //!   `cleanup` stage in either order.
 //! - [`ai`] *(feature `ai`, native only)* — VLM-based image understanding and
 //!   AI-assisted markdown refine, active only when a caller supplies an API key.
+//! - [`cli_update`] *(feature `cli-update`, for the `*-cli` crates)* — the update notice
+//!   (cached for a day; off by flag, environment variable, CI or a non-terminal stderr) and the
+//!   `update` command's self-replacement from the tool's GitHub release.
 //! - [`scaffold`] — macros that assemble an entry point out of those primitives. Reach for
 //!   these before writing the five steps by hand; the sentinel differs by return type and
 //!   that is where hand-written entry points drift.
@@ -111,6 +114,8 @@
 
 #[cfg(feature = "ai")]
 pub mod ai;
+#[cfg(feature = "cli-update")]
+pub mod cli_update;
 pub mod csv;
 pub mod ffi;
 pub mod grid;

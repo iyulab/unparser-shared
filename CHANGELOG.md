@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.0
+
+### Added
+
+- `cli_update` (feature `cli-update`): the update notice and the `update` command for a
+  command-line tool released on GitHub. The notice asks GitHub at most once a day — the answer
+  is cached in the user's cache directory, and the other runs make no request and wait for
+  nothing — and is not checked at all when the caller passes `disabled` (a
+  `--no-update-check` flag), when `<TOOL>_NO_UPDATE_CHECK` or `UNPARSER_NO_UPDATE_CHECK` is
+  set, in CI (`CI` set), or when stderr is not a terminal. `run_update` installs the
+  tool's own release archive, matched by exact name so the `lib<tool>-…` library archive is
+  never taken for it, and the musl build's archive for a musl build.
+
+### Changed
+
+- `rust-version` is 1.88: the release client `cli-update` uses requires it. The three parsers
+  that depend on this crate already declare 1.88.
+
 ## 0.8.0
 
 ### Added
