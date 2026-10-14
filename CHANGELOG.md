@@ -10,6 +10,10 @@
   paragraph whose text starts `1. `, `* `, `# ` or `> ` reads back as that paragraph instead of
   a list item, a heading or a quote. Lines indented four spaces or more, and markers already
   escaped, are left alone.
+- `markdown::escape_html_syntax(text)` — escapes what a Markdown reader would take for HTML:
+  a `<` that can open a tag, a comment, a declaration, a processing instruction or an autolink
+  (`Vec<String>`, `<b>`, `<https://…>`), and a `&` that starts a character reference
+  (`&amp;`). `1 < 2`, `R&D` and `a & b` are left alone. Applied after Markdown escaping.
 
 ## 0.9.0
 

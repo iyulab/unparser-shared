@@ -413,6 +413,101 @@ pub fn escape_block_starts(text: &str) -> String {
     out
 }
 
+/// `text` with what a Markdown reader would take for HTML escaped: a `<` that can open a tag,
+/// a comment, a declaration, a processing instruction or an autolink, and a `&` that starts
+/// a character reference.
+///
+/// Text written into Markdown is read for inline HTML (CommonMark §6.6–6.7): `Vec<String>`
+/// shows as `Vec` with an unknown tag swallowed, `a <b>bold</b>` turns bold, `AT&amp;T`
+/// shows as `AT&T`. A `<` is escaped unless the character after it cannot start any of those
+/// — a space, a digit, `=`, … — and a `<` that ends `text` is escaped too, since the next
+/// piece written after it may start with a letter. A `&` is escaped only where a character
+/// reference starts (`&name;`, `&#…;`), so `R&D` and `a & b` are left alone.
+///
+/// `text` may already be escaped for Markdown (`\\` for a backslash); apply this after that.
+///
+/// ```
+/// use unparser_shared::markdown::escape_html_syntax;
+///
+/// assert_eq!(escape_html_syntax("Vec<String>"), r"Vec\<String>");
+/// assert_eq!(escape_html_syntax("a <b>bold</b>"), r"a \<b>bold\</b>");
+/// assert_eq!(escape_html_syntax("AT&amp;T, R&D, 1 < 2"), r"AT\&amp;T, R&D, 1 < 2");
+/// ```
+pub fn escape_html_syntax(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    for (i, c) in text.char_indices() {
+        let rest = &text[i + c.len_utf8()..];
+        let opens = match c {
+            '<' => rest
+                .chars()
+                .next()
+                .is_none_or(|n| n.is_ascii_alphabetic() || matches!(n, '/' | '!' | '?')),
+            '&' => starts_character_reference(rest),
+            _ => false,
+        };
+        if opens {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Whether the `delimiter` (`*` or `_`) characters of `text` can make emphasis among
+/// themselves: a run of them that can open (CommonMark §6.2: left-flanking, and for `_` not
+/// inside a word) followed somewhere later by a run that can close.
+///
+/// `text` is a complete inline context — a table cell, a link label — so when no run can
+/// pair, every delimiter in it is read as itself and none needs escaping: the significance
+/// stars of `0.039***`, a lone `*8 ml`. Without a later closer an opener opens nothing.
+/// The answer errs toward `true`: the rule of three (§6.2, rules 9–10) is not applied, so a
+/// pair it would forbid still counts as one.
+///
+/// ```
+/// use unparser_shared::markdown::emphasis_can_pair;
+///
+/// assert!(!emphasis_can_pair("0.039***", '*'));
+/// assert!(!emphasis_can_pair("*8 ml", '*'));
+/// assert!(emphasis_can_pair("x*y*z", '*'));
+/// assert!(emphasis_can_pair("a _foo_ b", '_'));
+/// assert!(!emphasis_can_pair("snake_case_name", '_'));
+/// ```
+pub fn emphasis_can_pair(text: &str, delimiter: char) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    let mut opener_seen = false;
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] != delimiter {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && chars[i] == delimiter {
+            i += 1;
+        }
+        let before = start.checked_sub(1).map(|b| chars[b]);
+        let after = chars.get(i).copied();
+        let space = |c: Option<char>| c.is_none_or(char::is_whitespace);
+        let punct =
+            |c: Option<char>| c.is_some_and(|c| is_flanking_neutral(c) && !c.is_whitespace());
+        let left = !space(after) && (!punct(after) || space(before) || punct(before));
+        let right = !space(before) && (!punct(before) || space(after) || punct(after));
+        let (opens, closes) = if delimiter == '_' {
+            (
+                left && (!right || punct(before)),
+                right && (!left || punct(after)),
+            )
+        } else {
+            (left, right)
+        };
+        if closes && opener_seen {
+            return true;
+        }
+        opener_seen |= opens;
+    }
+    false
+}
+
 /// Where in `line` (already past its indentation) the character to escape stands, when the
 /// line opens a block (see [`escape_block_starts`]).
 fn block_marker_at(line: &str) -> Option<usize> {
@@ -635,6 +730,55 @@ mod tests {
             "",
         ] {
             assert_eq!(escape_block_starts(line), line, "{line:?}");
+        }
+    }
+
+    /// A delimiter pairs only with a later one that can close; a lone opener or closer, or
+    /// underscores inside words, make no emphasis.
+    #[test]
+    fn emphasis_pairs_only_opener_then_closer() {
+        for (text, delimiter, pairs) in [
+            ("0.039***", '*', false),
+            ("*8 ml", '*', false),
+            ("p < .05*", '*', false),
+            ("a * b * c", '*', false),
+            ("x*y*z", '*', true),
+            ("*bold* text", '*', true),
+            ("**strong**", '*', true),
+            ("a _foo_ b", '_', true),
+            ("snake_case_name", '_', false),
+            ("_init", '_', false),
+            ("(*) and (*)", '*', true),
+        ] {
+            assert_eq!(emphasis_can_pair(text, delimiter), pairs, "{text:?}");
+        }
+    }
+
+    /// What can open inline HTML or a character reference is escaped; what cannot is left.
+    #[test]
+    fn html_syntax_is_escaped_where_it_can_open() {
+        for (text, escaped) in [
+            ("Vec<String>", r"Vec\<String>"),
+            ("</div>", r"\</div>"),
+            ("<!-- c -->", r"\<!-- c -->"),
+            ("<?php", r"\<?php"),
+            ("<https://example.com>", r"\<https://example.com>"),
+            ("ends with <", r"ends with \<"),
+            ("&amp; &#38; &#x26;", r"\&amp; \&#38; \&#x26;"),
+        ] {
+            assert_eq!(escape_html_syntax(text), escaped, "{text:?}");
+        }
+        for text in [
+            "1 < 2",
+            "a <= b",
+            "<3",
+            "<< b",
+            "R&D",
+            "a & b",
+            "&notareference",
+            "& ;",
+        ] {
+            assert_eq!(escape_html_syntax(text), text, "{text:?}");
         }
     }
 
