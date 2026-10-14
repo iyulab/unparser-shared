@@ -5,9 +5,12 @@
 ### Added
 
 - `inflate::InflateGuard` -- a reader over decompressed data from an untrusted file that fails
-  once the data expands past what documents do (a decompression bomb), following Apache POI's
-  `ZipSecureFile`: past 100 KiB of output the compressed size must stay at least 1 % of it,
-  and no entry passes 4 GiB. `inflate::is_inflation_limit` tells its error from an I/O error.
+  once the data expands past what documents do (a decompression bomb). `InflateGuard::new`
+  follows Apache POI's `ZipSecureFile` (`inflate::InflateLimits::POI`): past 100 KiB of output
+  it may be at most 100 times the compressed size, and no entry passes 4 GiB.
+  `InflateGuard::with_limits` takes another format's `InflateLimits` (grace size, maximum
+  expansion, maximum size), and `InflateLimits::check` applies the same rule to a decoder that
+  is not a reader. `inflate::is_inflation_limit` tells its error from an I/O error.
 
 ## 0.10.0
 
