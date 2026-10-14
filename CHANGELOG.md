@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `grid::MAX_COL_SPAN` (1000) and `grid::MAX_ROW_SPAN` (65 534) -- the bounds HTML's table
+  processing model reads `colspan` and `rowspan` with.
+
+### Fixed
+
+- **`grid::place` no longer sizes a table by one cell's declared span.** A span is a number
+  the document states, and the grid is as wide as the furthest any cell reaches, so a single
+  cell declaring a span of billions of columns made every laid-out row that wide. A span past
+  `MAX_COL_SPAN` / `MAX_ROW_SPAN` is now read as that bound, as HTML reads one.
+
 ## 0.11.0
 
 ### Added

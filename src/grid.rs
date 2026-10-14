@@ -9,8 +9,22 @@
 //!
 //! `std`-only, like the rest of the crate root.
 
+/// The most columns [`place`] lets one cell own: a larger span is read as this many.
+///
+/// A span is a number the document declares — two bytes in one format, a decimal attribute in
+/// another — and the grid is as wide as the furthest any cell reaches, so one declared span
+/// would otherwise size every row of the laid-out table. The value is the one HTML's table
+/// processing model clamps `colspan` to (WHATWG HTML, «algorithm for processing rows»); no
+/// format in the family writes a wider merge except a spreadsheet's across its whole width.
+pub const MAX_COL_SPAN: u32 = 1000;
+
+/// The most rows [`place`] lets one cell own, the value HTML clamps `rowspan` to. A row span
+/// costs no allocation here — it only counts down rows that exist — but is read the same way
+/// HTML reads it, so a renderer that lays rows out itself can share the bound.
+pub const MAX_ROW_SPAN: u32 = 65_534;
+
 /// How many grid rows and columns a cell owns, its own position included. A span of 0 is read
-/// as 1.
+/// as 1; one past [`MAX_ROW_SPAN`] or [`MAX_COL_SPAN`] as that bound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     /// Rows the cell owns.
@@ -80,7 +94,10 @@ where
                 covered[col] -= 1;
                 col += 1;
             }
-            let (rows, cols) = (span.rows.max(1) as usize, span.cols.max(1) as usize);
+            let (rows, cols) = (
+                span.rows.clamp(1, MAX_ROW_SPAN) as usize,
+                span.cols.clamp(1, MAX_COL_SPAN) as usize,
+            );
             columns.push(col);
             if covered.len() < col + cols {
                 covered.resize(col + cols, 0);
@@ -103,6 +120,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_declared_span_past_the_bound_is_read_as_the_bound() {
+        let placement = place(spans(&[&[(u32::MAX, u32::MAX), (1, 1)], &[(1, 1)]]));
+        assert_eq!(
+            placement.columns,
+            vec![vec![0, MAX_COL_SPAN as usize], vec![MAX_COL_SPAN as usize]]
+        );
+        assert_eq!(placement.width, MAX_COL_SPAN as usize + 1);
+    }
 
     fn spans(rows: &[&[(u32, u32)]]) -> Vec<Vec<Span>> {
         rows.iter()
