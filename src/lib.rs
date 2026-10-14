@@ -119,6 +119,7 @@ pub mod cli_update;
 pub mod csv;
 pub mod ffi;
 pub mod grid;
+pub mod inflate;
 pub mod kind;
 pub mod markdown;
 #[cfg(feature = "refine")]
