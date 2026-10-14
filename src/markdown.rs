@@ -362,6 +362,97 @@ pub fn link_destination(url: &str, in_table_cell: bool) -> String {
 
 /// Whether the text after an `&` makes it a character reference (§6.2) — `name;`, `#123;` or
 /// `#x1F;` — which CommonMark would replace by the character it names.
+/// `text` with whatever would open a block at the start of one of its lines escaped, so that
+/// prose written into a paragraph or a list item reads back as that prose.
+///
+/// A writer puts its own block markers in front of the text — `# ` for a heading it means,
+/// `1. ` for a list it means. Text the document supplies is not supposed to add any, but a
+/// paragraph whose text starts `1. `, `* `, `# ` or `> ` is, written as is, a list item, a
+/// heading or a quote (CommonMark §4–5). At the start of each line, after at most three
+/// spaces, this escapes the first character of:
+///
+/// - an ATX heading opener: one to six `#` followed by a space, a tab or the line's end;
+/// - a bullet list marker: `-`, `+` or `*` followed by a space, a tab or the line's end;
+/// - an ordered list marker: one to nine digits and `.` or `)`, followed likewise (the
+///   delimiter is escaped: `1\.`);
+/// - a block quote marker: `>`;
+/// - a code fence: three or more `` ` `` or `~`;
+/// - a thematic break or setext heading underline: a line of `-`, `*`, `_` (spaces between
+///   allowed) or of `=` alone.
+///
+/// A line indented four spaces or more is left alone — a paragraph continues through it, and
+/// a writer has already removed indentation from a paragraph's first line. A character that
+/// is already escaped (`\*`) opens nothing and is left as it is. Not for table cells, where
+/// no block can start.
+///
+/// ```
+/// use unparser_shared::markdown::escape_block_starts;
+///
+/// assert_eq!(escape_block_starts("1. A sentence that starts with a number"), r"1\. A sentence that starts with a number");
+/// assert_eq!(escape_block_starts("# not a heading"), r"\# not a heading");
+/// assert_eq!(escape_block_starts("* note\n> quoted"), "\\* note\n\\> quoted");
+/// assert_eq!(escape_block_starts("#hashtag, 2024. 10. 14"), "#hashtag, 2024. 10. 14");
+/// ```
+pub fn escape_block_starts(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 4);
+    for (n, line) in text.split('\n').enumerate() {
+        if n > 0 {
+            out.push('\n');
+        }
+        let indent = line.len() - line.trim_start_matches(' ').len();
+        match block_marker_at(&line[indent.min(line.len())..]).filter(|_| indent <= 3) {
+            Some(at) => {
+                let at = indent + at;
+                out.push_str(&line[..at]);
+                out.push('\\');
+                out.push_str(&line[at..]);
+            }
+            None => out.push_str(line),
+        }
+    }
+    out
+}
+
+/// Where in `line` (already past its indentation) the character to escape stands, when the
+/// line opens a block (see [`escape_block_starts`]).
+fn block_marker_at(line: &str) -> Option<usize> {
+    let bytes = line.as_bytes();
+    let first = *bytes.first()?;
+    // What follows a marker for it to be one: a space, a tab, or nothing.
+    let ends_marker = |i: usize| matches!(bytes.get(i), None | Some(b' ' | b'\t' | b'\r'));
+    let content = line.trim_end_matches([' ', '\t', '\r']);
+    let only = |c: u8, spaced: bool| {
+        content
+            .bytes()
+            .all(|b| b == c || (spaced && (b == b' ' || b == b'\t')))
+    };
+    match first {
+        b'#' => {
+            let hashes = bytes.iter().take_while(|&&b| b == b'#').count();
+            (hashes <= 6 && ends_marker(hashes)).then_some(0)
+        }
+        b'>' => Some(0),
+        b'-' | b'+' | b'*' if ends_marker(1) => Some(0),
+        // A thematic break (three or more) or a setext underline (`-`, any number).
+        b'-' if only(b'-', true) => Some(0),
+        b'*' | b'_'
+            if only(first, true) && content.bytes().filter(|&b| b == first).count() >= 3 =>
+        {
+            Some(0)
+        }
+        b'=' if only(b'=', false) => Some(0),
+        b'`' | b'~' if bytes.iter().take_while(|&&b| b == first).count() >= 3 => Some(0),
+        b'0'..=b'9' => {
+            let digits = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
+            (digits <= 9
+                && matches!(bytes.get(digits), Some(b'.' | b')'))
+                && ends_marker(digits + 1))
+            .then_some(digits)
+        }
+        _ => None,
+    }
+}
+
 fn starts_character_reference(rest: &str) -> bool {
     let Some(end) = rest.find(';') else {
         return false;
@@ -497,5 +588,62 @@ mod tests {
     fn non_ascii_punctuation_and_letters_count() {
         assert_eq!(wrap("“word”", Some('x'), Some('y')), "“*word*”");
         assert_eq!(wrap("단어", Some('가'), Some('나')), "*단어*");
+    }
+
+    /// Every block a line of prose can open, escaped at its first character -- and what
+    /// opens none left as it is.
+    #[test]
+    fn block_starts_are_escaped() {
+        for (line, escaped) in [
+            ("# a", r"\# a"),
+            ("###### a", r"\###### a"),
+            ("#", r"\#"),
+            ("- a", r"\- a"),
+            ("+ a", r"\+ a"),
+            ("* a", r"\* a"),
+            ("-", r"\-"),
+            ("1. a", r"1\. a"),
+            ("1) a", r"1\) a"),
+            ("2024. 10. 14", r"2024\. 10. 14"),
+            ("123456789. a", r"123456789\. a"),
+            ("> a", r"\> a"),
+            (">a", r"\>a"),
+            ("```", r"\```"),
+            ("~~~ rust", r"\~~~ rust"),
+            ("---", r"\---"),
+            ("* * *", r"\* * *"),
+            ("___", r"\___"),
+            ("===", r"\==="),
+            ("   # a", r"   \# a"),
+        ] {
+            assert_eq!(escape_block_starts(line), escaped, "{line:?}");
+        }
+        for line in [
+            "#a",
+            "####### a",
+            "-a",
+            "*a*",
+            "1.5 litres",
+            "1234567890. a",
+            "a. b",
+            "__init__",
+            "**",
+            "= a",
+            "``",
+            "    # a",
+            r"\* a",
+            "",
+        ] {
+            assert_eq!(escape_block_starts(line), line, "{line:?}");
+        }
+    }
+
+    /// Every line is a line start, not only the first: a paragraph with a hard break.
+    #[test]
+    fn every_line_of_the_text_is_checked() {
+        assert_eq!(
+            escape_block_starts("first  \n# second\nthird"),
+            "first  \n\\# second\nthird"
+        );
     }
 }

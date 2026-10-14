@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `markdown::escape_block_starts(text)` — escapes what would open a block at the start of a
+  line of prose: an ATX heading's `#`, a bullet `-` `+` `*`, an ordered list's `1.` / `1)`
+  delimiter, a block quote's `>`, a code fence, a thematic break or setext underline. A
+  paragraph whose text starts `1. `, `* `, `# ` or `> ` reads back as that paragraph instead of
+  a list item, a heading or a quote. Lines indented four spaces or more, and markers already
+  escaped, are left alone.
+
 ## 0.9.0
 
 ### Added
