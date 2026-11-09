@@ -40,7 +40,7 @@ cli-update = ["dep:self_update", "dep:self-replace", "dep:tempfile", "dep:semver
 # behind their own feature flag instead.
 [dependencies]
 pulldown-cmark = { version = "0.13", default-features = false, optional = true }
-pulldown-cmark-to-cmark = { version = "22", optional = true }
+pulldown-cmark-to-cmark = { version = "23", optional = true }
 # `default-features = false` drops gzip/cookie-jar/etc — this feature wants only
 # a TLS-capable transport and JSON (de)serialization, kept as narrow as ureq allows.
 ureq = { version = "3.4", default-features = false, features = ["rustls", "json"], optional = true }

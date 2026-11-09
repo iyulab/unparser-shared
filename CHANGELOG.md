@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **`refine` uses `pulldown-cmark-to-cmark` 23.** The serializer is given the options the events
+  were parsed with, and it now refuses a structurally invalid event stream (an `End` with no
+  matching `Start`) instead of writing something for it, so the keep-the-original fallback of
+  `refine` is reachable for such a stream. Streams read from a real parser are unaffected.
+  Table cells gain no escapes: release 23.0.0 wrote `0\.05`, `\-` and `1\.` inside cells, where
+  no block can start; 23.0.1 does not, and a test now pins it.
+
 ## 0.12.0
 
 ### Added

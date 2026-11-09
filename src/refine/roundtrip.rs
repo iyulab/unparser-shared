@@ -3,16 +3,12 @@
 //!
 //! [`serialize`] is isolated from [`crate::refine::refine`] so the CommonMark-preserved
 //! fallback (`crate::refine::refine` returning its input unchanged) stays a documented,
-//! deliberate invariant rather than untested dead code. In the current
-//! `String`-backed implementation it is, empirically, unreachable:
-//! `pulldown_cmark_to_cmark::cmark`'s only error is `fmt::Error`, and
-//! `String`'s `fmt::Write` impl never returns one — confirmed by attempting to
-//! trigger it with a hand-built, structurally invalid event stream (an `End`
-//! with no matching `Start`), which still serializes successfully. The guard
-//! stays because the design invariant ("parse failure → original text,
-//! unconditionally") must hold regardless of *how* `serialize` is implemented
-//! later — e.g. a sink that can fail (a `Write`r, not a `String`) would make
-//! this branch live again without any caller-visible change.
+//! deliberate invariant rather than untested dead code. The serializer refuses a
+//! structurally invalid event stream (an `End` with no matching `Start`) instead
+//! of writing something for it, so the branch is reachable: it is the path a
+//! hand-built or corrupted stream takes, and it keeps the design invariant
+//! ("parse failure → original text, unconditionally"). A stream that comes from
+//! a real `Parser`, as `round_trip` always builds it, is never invalid.
 
 use pulldown_cmark::{Event, Options, Parser};
 
@@ -70,9 +66,12 @@ fn serializer_options() -> pulldown_cmark_to_cmark::Options<'static> {
 
 pub(crate) fn serialize(events: Vec<Event>) -> Option<String> {
     let mut output = String::new();
+    // The serializer takes the options the events were parsed with, and refuses a structurally
+    // invalid stream (`None` here, so `refine` keeps the original) rather than guessing.
     pulldown_cmark_to_cmark::cmark_with_options(
-        events.into_iter(),
+        events,
         &mut output,
+        parser_options(),
         serializer_options(),
     )
     .ok()?;
@@ -99,16 +98,28 @@ mod tests {
     }
 
     #[test]
-    fn serialize_tolerates_a_structurally_invalid_event_stream() {
-        // Documents the empirical finding in this module's doc comment: even
-        // a hand-built, unbalanced stream (an `End` with no matching `Start`)
-        // does not make `cmark()` return `Err` when writing into a `String`.
-        // `round_trip` never builds a stream like this itself (it always
-        // comes from a real `Parser`) — this just pins the observed behavior
-        // so a future dependency bump that changes it is caught here, not
-        // discovered as a silent new fallback path in `crate::refine::refine`.
+    fn serialize_refuses_a_structurally_invalid_event_stream() {
+        // A hand-built, unbalanced stream (an `End` with no matching `Start`) is
+        // refused, so `crate::refine::refine` keeps the original text. `round_trip`
+        // never builds such a stream itself (it always comes from a real `Parser`);
+        // this pins the refusal so a dependency change that goes back to writing
+        // something for it is caught here, not as a silent change of the fallback path.
         let events = vec![Event::End(TagEnd::Emphasis)];
-        assert!(serialize(events).is_some());
+        assert!(serialize(events).is_none());
+    }
+
+    #[test]
+    fn table_cells_gain_no_block_start_escapes() {
+        // Inside a table cell no block can start, so a decimal, a lone dash and a number
+        // followed by a dot are text, not list markers. One release of the serializer
+        // wrote `0\.05`, `\-` and `1\.` there, adding a backslash to every decimal in
+        // every table of the Markdown-as-text output.
+        let input = "| a | b | c |\n| --- | --- | --- |\n| 0.05 | - | 1. |\n";
+        let output = round_trip(input).unwrap();
+        assert!(!output.contains('\\'), "cells gained an escape: {output:?}");
+        for token in ["0.05", "1."] {
+            assert!(output.contains(token), "missing {token:?} in {output:?}");
+        }
     }
 
     #[test]
