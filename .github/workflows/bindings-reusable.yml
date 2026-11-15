@@ -34,6 +34,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # The oldest glibc the linux-x64 (gnu) library may require; release-reusable.yml declares the same
+  # value, explains it, and runs the same "Check the glibc floor" step on its own builds.
+  GLIBC_FLOOR: '2.35'
 
 jobs:
   build-native:
@@ -44,7 +47,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # Pinned, not `ubuntu-latest`: this library is the linux-x64 one inside the Python wheel and
+          # the NuGet package, and the glibc of the image that builds it is the glibc it demands of
+          # every machine that loads it (see GLIBC_FLOOR).
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             artifact: lib${{ inputs.package-name }}.so
             runtime: linux-x64
@@ -81,6 +87,25 @@ jobs:
         run: cargo build --release --features ffi --target ${{ matrix.target }}
         env:
           RUSTFLAGS: ${{ contains(matrix.target, 'musl') && '-C target-feature=-crt-static' || '' }}
+
+      - name: Check the glibc floor
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        env:
+          CHECKED_FILE: target/${{ matrix.target }}/release/${{ matrix.artifact }}
+        run: |
+          set -euo pipefail
+          need=$(objdump -T "$CHECKED_FILE" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sort -uV | tail -n 1 || true)
+          if [ -z "$need" ]; then
+            echo "::error::$CHECKED_FILE requires no glibc symbol version -- the check read the wrong file"
+            exit 1
+          fi
+          echo "$CHECKED_FILE: highest glibc symbol version $need (floor GLIBC_$GLIBC_FLOOR)"
+          if [ "$(printf '%s\n' "GLIBC_$GLIBC_FLOOR" "$need" | sort -V | tail -n 1)" != "GLIBC_$GLIBC_FLOOR" ]; then
+            echo "::error::$CHECKED_FILE requires $need, above the floor GLIBC_$GLIBC_FLOOR"
+            objdump -T "$CHECKED_FILE" | grep -F "($need)" || true
+            exit 1
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
